@@ -1,5 +1,7 @@
 # BERT
 
+**modified to handle Thai legal term correction data**
+
 **\*\*\*\*\* New February 7th, 2019: TfHub Module \*\*\*\*\***
 
 BERT has been uploaded to [TensorFlow Hub](https://tfhub.dev). See
