@@ -1,3 +1,9 @@
+# added
+
+output/
+dataset*/
+multi_cased_L-12_H-768_A-12/
+
 # Initially taken from Github's Python gitignore file
 
 # Byte-compiled / optimized / DLL files
