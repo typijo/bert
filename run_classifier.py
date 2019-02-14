@@ -388,7 +388,7 @@ class TltcProcessor(DataProcessor):
     for i in range(len(os.listdir(data_dir))):
       if i != id_cv:
         examples += self._create_examples(
-          self._read_tsv(os.path.join(data_dir, "{}.tsv".format(id_cv))), "train")
+          self._read_tsv(os.path.join(data_dir, "{}.tsv".format(i))), "train")
     
     return examples
 
