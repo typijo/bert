@@ -380,11 +380,27 @@ class TltcProcessor(DataProcessor):
     """See base class."""
     return self._create_examples(
         self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
+  
+  def get_train_examples_cv(self, data_dir, id_cv):
+    """*ADDED* for doing cv"""
+    examples = []
+
+    for i in range(len(os.listdir(data_dir))):
+      if i != id_cv:
+        examples += self._create_examples(
+          self._read_tsv(os.path.join(data_dir, "{}.tsv".format(id_cv))), "train")
+    
+    return examples
 
   def get_dev_examples(self, data_dir):
     """See base class."""
     return self._create_examples(
         self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+  
+  def get_dev_examples_cv(self, data_dir, id_cv):
+    """*ADDED* for doing cv"""
+    return self._create_examples(
+        self._read_tsv(os.path.join(data_dir, "{}.tsv".format(id_cv))), "dev")
 
   def get_test_examples(self, data_dir):
     """See base class."""
