@@ -442,12 +442,15 @@ class TltcProcessor(DataProcessor):
     import numpy as np
     import random
 
+    tf.logging.info("*** Undersampling ***")
+
     examples_bylabel = {label: [] for label in self.get_labels()}
     for example in examples:
       examples_bylabel[example.label] += [example]
     
     counts = []
     for key in examples_bylabel:
+      tf.logging.info("{} data originally for {}".format(len(examples_bylabel[key]), key))
       if len(examples_bylabel[key]) > 0:
         counts += [len(examples_bylabel[key])]
     
@@ -457,8 +460,6 @@ class TltcProcessor(DataProcessor):
       num_sample = int(np.array(counts).prod()**(1/len(counts)))
     else:
       num_sample = min(counts)
-    
-    tf.logging.info("*** Undersampling ***")
     
     ret = []
     for key in examples_bylabel:
