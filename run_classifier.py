@@ -444,6 +444,8 @@ class TltcProcessor(DataProcessor):
 
     tf.logging.info("*** Undersampling ***")
 
+    tf.logging.info("{} data".format(len(examples)))
+
     examples_bylabel = {label: [] for label in self.get_labels()}
     for example in examples:
       examples_bylabel[example.label] += [example]
