@@ -465,7 +465,10 @@ class TltcProcessor(DataProcessor):
     
     ret = []
     for key in examples_bylabel:
-      sampled = random.sample(examples_bylabel[key], num_sample)
+      if len(examples_bylabel[key]) > num_sample:
+        sampled = random.sample(examples_bylabel[key], num_sample)
+      else:
+        sampled = examples_bylabel[key]
 
       tf.logging.info("{} data sampled for label {}".format(len(sampled), key))
       ret += sampled
