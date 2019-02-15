@@ -381,7 +381,7 @@ class TltcProcessor(DataProcessor):
     return self._create_examples(
         self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
   
-  def get_train_examples_cv(self, data_dir, id_cv):
+  def get_train_examples_cv(self, data_dir, id_cv, method_undersample=None):
     """*ADDED* for doing cv"""
     examples = []
 
@@ -389,6 +389,9 @@ class TltcProcessor(DataProcessor):
       if i != id_cv:
         examples += self._create_examples(
           self._read_tsv(os.path.join(data_dir, "{}.tsv".format(i))), "train")
+    
+    if method_undersample != None:
+      examples = self._undersample_examples(examples, method_undersample)
     
     return examples
 
@@ -434,6 +437,34 @@ class TltcProcessor(DataProcessor):
       examples.append(
           InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
     return examples
+  
+  def _undersample_examples(self, examples, method="min"):
+    import numpy as np
+    import random
+
+    examples_bylabel = {label: [] for label in self.get_labels()}
+    for example in examples:
+      examples_bylabel[example.label_id] += [example]
+    
+    if method == "min":
+      num_sample = min([len(examples_bylabel[key]) for key in examples_bylabel])
+    elif method == "geomean":
+      counts = [len(examples_bylabel[key]) for key in examples_bylabel]
+      num_sample = int(np.array(counts).prod()**(1/len(counts)))
+    else:
+      num_sample = min([len(examples_bylabel[key]) for key in examples_bylabel])
+    
+    tf.logging.info("*** Undersampling ***")
+    
+    ret = []
+    for key in examples_bylabel:
+      sampled = random.sample(examples_bylabel[key], num_sample)
+
+      tf.logging.info("{} data sampled for label {}".format(len(sampled), key))
+      ret += sampled
+    
+    return ret
+
 
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer):
