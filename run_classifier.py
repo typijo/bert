@@ -392,6 +392,7 @@ class TltcProcessor(DataProcessor):
     
     if method_undersample != None:
       examples = self._undersample_examples(examples, method_undersample)
+    print(examples)
     
     return examples
 
