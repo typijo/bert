@@ -392,7 +392,6 @@ class TltcProcessor(DataProcessor):
     
     if method_undersample != None:
       examples = self._undersample_examples(examples, method_undersample)
-    tf.logging.warning(str(examples) + str(len(examples)))
     
     return examples
 
@@ -447,13 +446,17 @@ class TltcProcessor(DataProcessor):
     for example in examples:
       examples_bylabel[example.label] += [example]
     
+    counts = []
+    for key in examples_bylabel:
+      if len(examples_bylabel[key]) > 0:
+        counts += [len(examples_bylabel[key])]
+    
     if method == "min":
-      num_sample = min([len(examples_bylabel[key]) for key in examples_bylabel])
+      num_sample = min(counts)
     elif method == "geomean":
-      counts = [len(examples_bylabel[key]) for key in examples_bylabel]
       num_sample = int(np.array(counts).prod()**(1/len(counts)))
     else:
-      num_sample = min([len(examples_bylabel[key]) for key in examples_bylabel])
+      num_sample = min(counts)
     
     tf.logging.info("*** Undersampling ***")
     
