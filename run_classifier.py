@@ -444,7 +444,7 @@ class TltcProcessor(DataProcessor):
 
     examples_bylabel = {label: [] for label in self.get_labels()}
     for example in examples:
-      examples_bylabel[example.label_id] += [example]
+      examples_bylabel[example.label] += [example]
     
     if method == "min":
       num_sample = min([len(examples_bylabel[key]) for key in examples_bylabel])
