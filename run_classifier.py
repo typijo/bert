@@ -473,6 +473,9 @@ class TltcProcessor(DataProcessor):
       tf.logging.info("{} data sampled for label {}".format(len(sampled), key))
       ret += sampled
     
+    import random
+    random.shuffle(ret)
+    
     return ret
 
 
