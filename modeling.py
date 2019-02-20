@@ -35,6 +35,9 @@ class BertConfig(object):
                vocab_size,
                hidden_size=768,
                num_hidden_layers=12,
+               num_hidden_layers_student=1,
+               temperature=10000,
+               lambda_soft=0.1,
                num_attention_heads=12,
                intermediate_size=3072,
                hidden_act="gelu",
@@ -49,6 +52,7 @@ class BertConfig(object):
       vocab_size: Vocabulary size of `inputs_ids` in `BertModel`.
       hidden_size: Size of the encoder layers and the pooler layer.
       num_hidden_layers: Number of hidden layers in the Transformer encoder.
+      num_hidden_layers_student: Number of hidden layers in the Transformer encoder (student model)
       num_attention_heads: Number of attention heads for each attention layer in
         the Transformer encoder.
       intermediate_size: The size of the "intermediate" (i.e., feed-forward)
@@ -70,6 +74,9 @@ class BertConfig(object):
     self.vocab_size = vocab_size
     self.hidden_size = hidden_size
     self.num_hidden_layers = num_hidden_layers
+    self.num_hidden_layers_student = num_hidden_layers_student
+    self.temperature = temperature
+    self.lambda_soft = lambda_soft
     self.num_attention_heads = num_attention_heads
     self.hidden_act = hidden_act
     self.intermediate_size = intermediate_size
@@ -141,7 +148,7 @@ class BertModel(object):
     Args:
       config: `BertConfig` instance.
       is_training: bool. true for training model, false for eval model. Controls
-        whether dropout will be applied.
+        whether dropout will be applied. #added , and refrain from updating weights
       input_ids: int32 Tensor of shape [batch_size, seq_length].
       input_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
       token_type_ids: (optional) int32 Tensor of shape [batch_size, seq_length].
@@ -177,7 +184,8 @@ class BertModel(object):
             embedding_size=config.hidden_size,
             initializer_range=config.initializer_range,
             word_embedding_name="word_embeddings",
-            use_one_hot_embeddings=use_one_hot_embeddings)
+            use_one_hot_embeddings=use_one_hot_embeddings,
+            trainable=is_training)
 
         # Add positional embeddings and token type embeddings, then layer
         # normalize and perform dropout.
@@ -191,7 +199,8 @@ class BertModel(object):
             position_embedding_name="position_embeddings",
             initializer_range=config.initializer_range,
             max_position_embeddings=config.max_position_embeddings,
-            dropout_prob=config.hidden_dropout_prob)
+            dropout_prob=config.hidden_dropout_prob,
+            trainable=is_training)
 
       with tf.variable_scope("encoder"):
         # This converts a 2D mask of shape [batch_size, seq_length] to a 3D
@@ -200,20 +209,28 @@ class BertModel(object):
         attention_mask = create_attention_mask_from_input_mask(
             input_ids, input_mask)
 
+        # *ADDED* changes number of layers by argument "scope"
+        if scope == "bert_student":
+          num_hidden_layers = config.num_hidden_layers_student
+        else:
+          num_hidden_layers = config.num_hidden_layers
+
+
         # Run the stacked transformer.
         # `sequence_output` shape = [batch_size, seq_length, hidden_size].
         self.all_encoder_layers = transformer_model(
             input_tensor=self.embedding_output,
             attention_mask=attention_mask,
             hidden_size=config.hidden_size,
-            num_hidden_layers=config.num_hidden_layers,
+            num_hidden_layers=num_hidden_layers, # changed
             num_attention_heads=config.num_attention_heads,
             intermediate_size=config.intermediate_size,
             intermediate_act_fn=get_activation(config.hidden_act),
             hidden_dropout_prob=config.hidden_dropout_prob,
             attention_probs_dropout_prob=config.attention_probs_dropout_prob,
             initializer_range=config.initializer_range,
-            do_return_all_layers=True)
+            do_return_all_layers=True,
+            trainable=is_training)
 
       self.sequence_output = self.all_encoder_layers[-1]
       # The "pooler" converts the encoded sequence tensor of shape
@@ -229,7 +246,8 @@ class BertModel(object):
             first_token_tensor,
             config.hidden_size,
             activation=tf.tanh,
-            kernel_initializer=create_initializer(config.initializer_range))
+            kernel_initializer=create_initializer(config.initializer_range),
+            trainable=is_training)
 
   def get_pooled_output(self):
     return self.pooled_output
@@ -359,15 +377,15 @@ def dropout(input_tensor, dropout_prob):
   return output
 
 
-def layer_norm(input_tensor, name=None):
+def layer_norm(input_tensor, name=None, trainable=True):
   """Run layer normalization on the last dimension of the tensor."""
   return tf.contrib.layers.layer_norm(
-      inputs=input_tensor, begin_norm_axis=-1, begin_params_axis=-1, scope=name)
+      inputs=input_tensor, begin_norm_axis=-1, begin_params_axis=-1, scope=name, trainable=trainable)
 
 
-def layer_norm_and_dropout(input_tensor, dropout_prob, name=None):
+def layer_norm_and_dropout(input_tensor, dropout_prob, name=None, trainable=True):
   """Runs layer normalization followed by dropout."""
-  output_tensor = layer_norm(input_tensor, name)
+  output_tensor = layer_norm(input_tensor, name, trainable=trainable)
   output_tensor = dropout(output_tensor, dropout_prob)
   return output_tensor
 
@@ -382,7 +400,8 @@ def embedding_lookup(input_ids,
                      embedding_size=128,
                      initializer_range=0.02,
                      word_embedding_name="word_embeddings",
-                     use_one_hot_embeddings=False):
+                     use_one_hot_embeddings=False,
+                     trainable=True):
   """Looks up words embeddings for id tensor.
 
   Args:
@@ -409,7 +428,8 @@ def embedding_lookup(input_ids,
   embedding_table = tf.get_variable(
       name=word_embedding_name,
       shape=[vocab_size, embedding_size],
-      initializer=create_initializer(initializer_range))
+      initializer=create_initializer(initializer_range),
+      trainable=trainable)
 
   flat_input_ids = tf.reshape(input_ids, [-1])
   if use_one_hot_embeddings:
@@ -434,7 +454,8 @@ def embedding_postprocessor(input_tensor,
                             position_embedding_name="position_embeddings",
                             initializer_range=0.02,
                             max_position_embeddings=512,
-                            dropout_prob=0.1):
+                            dropout_prob=0.1,
+                            trainable=True):
   """Performs various post-processing on a word embedding tensor.
 
   Args:
@@ -476,7 +497,8 @@ def embedding_postprocessor(input_tensor,
     token_type_table = tf.get_variable(
         name=token_type_embedding_name,
         shape=[token_type_vocab_size, width],
-        initializer=create_initializer(initializer_range))
+        initializer=create_initializer(initializer_range),
+        trainable=trainable)
     # This vocab will be small so we always do one-hot here, since it is always
     # faster for a small vocabulary.
     flat_token_type_ids = tf.reshape(token_type_ids, [-1])
@@ -492,7 +514,8 @@ def embedding_postprocessor(input_tensor,
       full_position_embeddings = tf.get_variable(
           name=position_embedding_name,
           shape=[max_position_embeddings, width],
-          initializer=create_initializer(initializer_range))
+          initializer=create_initializer(initializer_range),
+          trainable=trainable)
       # Since the position embedding table is a learned variable, we create it
       # using a (long) sequence length `max_position_embeddings`. The actual
       # sequence length might be shorter than this, for faster training of
@@ -517,7 +540,7 @@ def embedding_postprocessor(input_tensor,
                                        position_broadcast_shape)
       output += position_embeddings
 
-  output = layer_norm_and_dropout(output, dropout_prob)
+  output = layer_norm_and_dropout(output, dropout_prob, trainable=trainable)
   return output
 
 
@@ -568,7 +591,8 @@ def attention_layer(from_tensor,
                     do_return_2d_tensor=False,
                     batch_size=None,
                     from_seq_length=None,
-                    to_seq_length=None):
+                    to_seq_length=None,
+                    trainable=True):
   """Performs multi-headed attention from `from_tensor` to `to_tensor`.
 
   This is an implementation of multi-headed attention based on "Attention
@@ -668,7 +692,8 @@ def attention_layer(from_tensor,
       num_attention_heads * size_per_head,
       activation=query_act,
       name="query",
-      kernel_initializer=create_initializer(initializer_range))
+      kernel_initializer=create_initializer(initializer_range),
+      trainable=trainable)
 
   # `key_layer` = [B*T, N*H]
   key_layer = tf.layers.dense(
@@ -676,7 +701,8 @@ def attention_layer(from_tensor,
       num_attention_heads * size_per_head,
       activation=key_act,
       name="key",
-      kernel_initializer=create_initializer(initializer_range))
+      kernel_initializer=create_initializer(initializer_range),
+      trainable=trainable)
 
   # `value_layer` = [B*T, N*H]
   value_layer = tf.layers.dense(
@@ -684,7 +710,8 @@ def attention_layer(from_tensor,
       num_attention_heads * size_per_head,
       activation=value_act,
       name="value",
-      kernel_initializer=create_initializer(initializer_range))
+      kernel_initializer=create_initializer(initializer_range),
+      trainable=trainable)
 
   # `query_layer` = [B, N, F, H]
   query_layer = transpose_for_scores(query_layer, batch_size,
@@ -761,7 +788,8 @@ def transformer_model(input_tensor,
                       hidden_dropout_prob=0.1,
                       attention_probs_dropout_prob=0.1,
                       initializer_range=0.02,
-                      do_return_all_layers=False):
+                      do_return_all_layers=False,
+                      trainable=True):
   """Multi-headed, multi-layer Transformer from "Attention is All You Need".
 
   This is almost an exact implementation of the original Transformer encoder.
@@ -841,7 +869,8 @@ def transformer_model(input_tensor,
               do_return_2d_tensor=True,
               batch_size=batch_size,
               from_seq_length=seq_length,
-              to_seq_length=seq_length)
+              to_seq_length=seq_length,
+              trainable=trainable)
           attention_heads.append(attention_head)
 
         attention_output = None
@@ -858,9 +887,10 @@ def transformer_model(input_tensor,
           attention_output = tf.layers.dense(
               attention_output,
               hidden_size,
-              kernel_initializer=create_initializer(initializer_range))
+              kernel_initializer=create_initializer(initializer_range),
+              trainable=trainable)
           attention_output = dropout(attention_output, hidden_dropout_prob)
-          attention_output = layer_norm(attention_output + layer_input)
+          attention_output = layer_norm(attention_output + layer_input, trainable=trainable)
 
       # The activation is only applied to the "intermediate" hidden layer.
       with tf.variable_scope("intermediate"):
@@ -868,16 +898,18 @@ def transformer_model(input_tensor,
             attention_output,
             intermediate_size,
             activation=intermediate_act_fn,
-            kernel_initializer=create_initializer(initializer_range))
+            kernel_initializer=create_initializer(initializer_range),
+            trainable=trainable)
 
       # Down-project back to `hidden_size` then add the residual.
       with tf.variable_scope("output"):
         layer_output = tf.layers.dense(
             intermediate_output,
             hidden_size,
-            kernel_initializer=create_initializer(initializer_range))
+            kernel_initializer=create_initializer(initializer_range),
+            trainable=trainable)
         layer_output = dropout(layer_output, hidden_dropout_prob)
-        layer_output = layer_norm(layer_output + attention_output)
+        layer_output = layer_norm(layer_output + attention_output, trainable=trainable)
         prev_output = layer_output
         all_layer_outputs.append(layer_output)
 

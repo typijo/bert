@@ -123,6 +123,10 @@ flags.DEFINE_integer(
     "num_tpu_cores", 8,
     "Only used if `use_tpu` is True. Total number of TPU cores to use.")
 
+#*ADDED*
+flags.DEFINE_bool(
+    "do_kd", False,
+    "Whether to do kd training")
 
 class InputExample(object):
   """A single training/test example for simple sequence classification."""
@@ -675,6 +679,86 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
     else:
       tokens_b.pop()
 
+def create_model_kd(bert_config, is_training, input_ids, input_mask, segment_ids,
+                 labels, num_labels, use_one_hot_embeddings):
+  """Creates a classification model with teacher (12-layer BERT) and student (2-layer BERT)"""
+  model_t = modeling.BertModel(
+    config=bert_config,
+      is_training=False,
+      input_ids=input_ids,
+      input_mask=input_mask,
+      token_type_ids=segment_ids,
+      use_one_hot_embeddings=use_one_hot_embeddings) # todo refuse training this
+  
+  model_s = modeling.BertModel(
+    config=bert_config,
+      is_training=is_training,
+      input_ids=input_ids,
+      input_mask=input_mask,
+      token_type_ids=segment_ids,
+      use_one_hot_embeddings=use_one_hot_embeddings,
+      scope="bert_student")
+  
+  output_layer_t = model_t.get_pooled_output()
+  output_layer_s = model_s.get_pooled_output()
+
+  hidden_size = output_layer_t.shape[-1].value
+
+  output_weights_t = tf.get_variable(
+      "output_weights", [num_labels, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02),
+      trainable=False)
+  output_weights_s = tf.get_variable(
+      "output_weights_student", [num_labels, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  output_bias_t = tf.get_variable(
+      "output_bias", [num_labels], initializer=tf.zeros_initializer(),
+      trainable=False)
+  output_bias_s = tf.get_variable(
+      "output_bias_student", [num_labels], initializer=tf.zeros_initializer())
+
+  with tf.variable_scope("loss"):
+    if is_training:
+      # I.e., 0.1 dropout
+      output_layer_t = tf.nn.dropout(output_layer_t, keep_prob=0.9)
+      output_layer_s = tf.nn.dropout(output_layer_s, keep_prob=0.9)
+
+    ### knowledge distillation
+    if is_training:
+      T = bert_config.temperature
+    else:
+      T = 1
+
+    logits_t = tf.matmul(output_layer_t, output_weights_t, transpose_b=True)
+    logits_t = tf.nn.bias_add(logits_t, output_bias_t)
+
+    logits_s = tf.matmul(output_layer_s, output_weights_s, transpose_b=True)
+    logits_s = tf.nn.bias_add(logits_s, output_bias_s)
+
+    # soft target loss
+    logits_tT = logits_t * (1/T)
+    logits_sT = logits_s * (1/T)
+
+    p = tf.nn.softmax(logits_tT, axis=-1)
+    q = tf.nn.softmax(logits_sT, axis=-1)
+
+    loss_soft = -tf.matmul(p, tf.math.log(q), transpose_b=True)
+    loss_soft = loss_soft * (T**2)
+
+    # hard target loss
+    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+    log_probs = tf.nn.log_softmax(logits_s, axis=-1)
+    loss_hard = -(one_hot_labels * log_probs)
+
+    # synthesize two losses
+    l = bert_config.lambda_soft
+    per_example_loss = l*tf.reduce_sum(loss_soft, axis=-1) + (1-l)*tf.reduce_sum(loss_hard, axis=-1)
+
+    loss = tf.reduce_mean(per_example_loss)
+
+    return (loss, per_example_loss, logits_s, q)
+
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
                  labels, num_labels, use_one_hot_embeddings):
@@ -723,7 +807,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings):
+                     use_one_hot_embeddings, do_kd=False):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -745,9 +829,14 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-    (total_loss, per_example_loss, logits, probabilities) = create_model(
-        bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-        num_labels, use_one_hot_embeddings)
+    if do_kd:
+      (total_loss, per_example_loss, logits, probabilities) = create_model_kd(
+          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
+          num_labels, use_one_hot_embeddings)
+    else:
+      (total_loss, per_example_loss, logits, probabilities) = create_model(
+          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
+          num_labels, use_one_hot_embeddings)
 
     tvars = tf.trainable_variables()
     initialized_variable_names = {}
@@ -950,15 +1039,27 @@ def main(_):
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
-  model_fn = model_fn_builder(
-      bert_config=bert_config,
-      num_labels=len(label_list),
-      init_checkpoint=FLAGS.init_checkpoint,
-      learning_rate=FLAGS.learning_rate,
-      num_train_steps=num_train_steps,
-      num_warmup_steps=num_warmup_steps,
-      use_tpu=FLAGS.use_tpu,
-      use_one_hot_embeddings=FLAGS.use_tpu)
+  if FLAGS.do_kd:
+    model_fn = model_fn_builder(
+        bert_config=bert_config,
+        num_labels=len(label_list),
+        init_checkpoint=FLAGS.init_checkpoint,
+        learning_rate=FLAGS.learning_rate,
+        num_train_steps=num_train_steps,
+        num_warmup_steps=num_warmup_steps,
+        use_tpu=FLAGS.use_tpu,
+        use_one_hot_embeddings=FLAGS.use_tpu,
+        do_kd=True)
+  else:
+    model_fn = model_fn_builder(
+        bert_config=bert_config,
+        num_labels=len(label_list),
+        init_checkpoint=FLAGS.init_checkpoint,
+        learning_rate=FLAGS.learning_rate,
+        num_train_steps=num_train_steps,
+        num_warmup_steps=num_warmup_steps,
+        use_tpu=FLAGS.use_tpu,
+        use_one_hot_embeddings=FLAGS.use_tpu)
 
   # If TPU is not available, this will fall back to normal Estimator on CPU
   # or GPU.
