@@ -416,7 +416,7 @@ class TltcProcessor(DataProcessor):
 
   def get_labels(self):
     """See base class."""
-    return ["0", "1", "2"] # max three terms
+    return ["0", "1", "2", "3"] # max four terms
 
   def _create_examples(self, lines, set_type):
     """
