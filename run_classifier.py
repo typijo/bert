@@ -399,7 +399,7 @@ class TltcProcessor(DataProcessor):
     
     import random
     random.seed(0)
-    if len(examples) > num_max:
+    if type(num_max) == int and len(examples) > num_max:
       examples = random.sample(examples, num_max)
     if shuffle:
       random.shuffle(examples)
