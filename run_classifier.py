@@ -385,7 +385,7 @@ class TltcProcessor(DataProcessor):
     return self._create_examples(
         self._read_tsv(os.path.join(data_dir, "train.tsv")), "train")
   
-  def get_train_examples_cv(self, data_dir, id_cv, method_undersample=None, num_max=100000, shuffle=False):
+  def get_train_examples_cv(self, data_dir, id_cv, method_undersample=None, num_max=100000, shuffle=False, example_from=None, example_to=None):
     """*ADDED* for doing cv"""
     examples = []
 
@@ -398,10 +398,16 @@ class TltcProcessor(DataProcessor):
       examples = self._undersample_examples(examples, method_undersample)
     
     import random
+    random.seed(0)
     if len(examples) > num_max:
       examples = random.sample(examples, num_max)
     if shuffle:
       random.shuffle(examples)
+    
+    num_from = example_from if type(example_from) == int else 0
+    num_to = example_to if type(example_to) == int else len(examples)
+    
+    examples = examples[num_from:num_to]
     
     return examples
 
