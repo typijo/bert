@@ -609,6 +609,9 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
   assert len(input_mask) == max_seq_length
   assert len(segment_ids) == max_seq_length
 
+  # *ADDED* cid feature
+  input_cid = example.cid
+
   label_id = label_map[example.label]
   if ex_index < 5:
     tf.logging.info("*** Example ***")
@@ -618,10 +621,8 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
     tf.logging.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
     tf.logging.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
     tf.logging.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+    tf.logging.info("cid: %s" % input_cid)
     tf.logging.info("label: %s (id = %d)" % (example.label, label_id))
-  
-  # *ADDED* cid feature
-  input_cid = example.cid
   
   feature = InputFeatures(
       input_ids=input_ids,
