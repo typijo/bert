@@ -1052,7 +1052,7 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
             tf.constant(
               all_input_cids, shape=[num_examples],
               dtype=tf.int32
-            )
+            ),
         "label_ids":
             tf.constant(all_label_ids, shape=[num_examples], dtype=tf.int32)
     })
