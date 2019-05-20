@@ -257,7 +257,9 @@ class BertModel(object):
             word_embedding_name="cid_embeddings",
             use_one_hot_embeddings=use_one_hot_embeddings,
             trainable=is_training)
+          print("embedding earned")
           first_token_tensor = tf.concat([first_token_tensor, self.embedding_cid], axis=1)
+          print("tensor calculated")
 
         self.pooled_output = tf.layers.dense(
             first_token_tensor,
