@@ -247,6 +247,8 @@ class BertModel(object):
 
         # *ADDED* concat first_token_tensor and cid embeddings
         if scope == "with_cid":
+          print("entered with_cid logic")
+          print(input_cids)
           (self.embedding_cid, self.embedding_table_cid) = embedding_lookup(
             input_ids=input_cids,
             vocab_size=config.clist_size,
