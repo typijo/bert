@@ -1072,9 +1072,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     feature = convert_single_example(ex_index, example, label_list,
                                      max_seq_length, tokenizer)
 
-    if ex_index % 10000 == 0:
-      tf.logging.info("cid: {}".format(feature.input_cid))
-
     features.append(feature)
   return features
 
