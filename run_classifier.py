@@ -1022,7 +1022,7 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
     all_input_mask.append(feature.input_mask)
     all_segment_ids.append(feature.segment_ids)
     all_label_ids.append(feature.label_id)
-    all_input_ids.append(feature.input_cid if feature.input_cid != None else 0)
+    all_input_cids.append(feature.input_cid if feature.input_cid != None else 0)
 
   def input_fn(params):
     """The actual input function."""
