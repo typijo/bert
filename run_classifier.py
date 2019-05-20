@@ -128,10 +128,14 @@ flags.DEFINE_bool(
     "do_kd", False,
     "Whether to do kd training")
 
+flags.DEFINE_bool(
+    "use_cid", False,
+    "Whether to use cid as a feature")
+
 class InputExample(object):
   """A single training/test example for simple sequence classification."""
 
-  def __init__(self, guid, text_a, text_b=None, label=None):
+  def __init__(self, guid, text_a, text_b=None, cid=None, label=None):
     """Constructs a InputExample.
 
     Args:
@@ -146,8 +150,8 @@ class InputExample(object):
     self.guid = guid
     self.text_a = text_a
     self.text_b = text_b
+    self.cid = cid
     self.label = label
-
 
 class PaddingInputExample(object):
   """Fake example so the num input examples is a multiple of the batch size.
@@ -170,13 +174,14 @@ class InputFeatures(object):
                input_mask,
                segment_ids,
                label_id,
+               input_cid=None, # *ADDED* cid data
                is_real_example=True):
     self.input_ids = input_ids
     self.input_mask = input_mask
     self.segment_ids = segment_ids
     self.label_id = label_id
     self.is_real_example = is_real_example
-
+    self.input_cid = input_cid # *ADDED*
 
 class DataProcessor(object):
   """Base class for data converters for sequence classification data sets."""
@@ -494,6 +499,32 @@ class TltcProcessor(DataProcessor):
     
     return ret
 
+class TltcProcessorWithCid(TltcProcessor):
+  def _create_examples(self, lines, set_type):
+    """
+    Creates examples for the training and dev sets.
+    
+    TSV data format:
+    (answer term ID)\t(sentence (where there is a [MASK] token))
+    """
+
+    examples = []
+    for (i, line) in enumerate(lines):
+      # Only the test set has a header
+      if set_type == "test" and i == 0:
+        continue
+      guid = "%s-%s" % (set_type, i)
+      if set_type == "test":
+        label = "0"
+        text_a = tokenization.convert_to_unicode(line[1])
+        cid = line[2]
+      else:
+        label = tokenization.convert_to_unicode(line[0])
+        text_a = tokenization.convert_to_unicode(line[1])
+        cid = line[2]
+      examples.append(
+          InputExample(guid=guid, text_a=text_a, text_b=None, cid=cid, label=label))
+    return examples
 
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer):
@@ -505,6 +536,7 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
         input_mask=[0] * max_seq_length,
         segment_ids=[0] * max_seq_length,
         label_id=0,
+        input_cid=0, # *ADDED*
         is_real_example=False)
 
   label_map = {}
@@ -587,12 +619,19 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
     tf.logging.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
     tf.logging.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
     tf.logging.info("label: %s (id = %d)" % (example.label, label_id))
+  
+  # *ADDED* cid feature
+  if "cid" in example:
+    input_cid = example["cid"]
+  else:
+    input_cid = None
 
   feature = InputFeatures(
       input_ids=input_ids,
       input_mask=input_mask,
       segment_ids=segment_ids,
       label_id=label_id,
+      input_cid=input_cid, # *ADDED*
       is_real_example=True)
   return feature
 
@@ -619,6 +658,8 @@ def file_based_convert_examples_to_features(
     features["input_mask"] = create_int_feature(feature.input_mask)
     features["segment_ids"] = create_int_feature(feature.segment_ids)
     features["label_ids"] = create_int_feature([feature.label_id])
+    if feature.input_cid != None:  # *ADDED* set cid
+      features["input_cids"] = create_int_feature(feature.input_cid)
     features["is_real_example"] = create_int_feature(
         [int(feature.is_real_example)])
 
@@ -781,6 +822,52 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       input_ids=input_ids,
       input_mask=input_mask,
       token_type_ids=segment_ids,
+      use_one_hot_embeddings=use_one_hot_embeddings,
+      scope="with_cid")
+
+  # In the demo, we are doing a simple classification task on the entire
+  # segment.
+  #
+  # If you want to use the token-level output, use model.get_sequence_output()
+  # instead.
+  output_layer = model.get_pooled_output()
+
+  hidden_size = output_layer.shape[-1].value
+
+  output_weights = tf.get_variable(
+      "output_weights", [num_labels, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  output_bias = tf.get_variable(
+      "output_bias", [num_labels], initializer=tf.zeros_initializer())
+
+  with tf.variable_scope("loss"):
+    if is_training:
+      # I.e., 0.1 dropout
+      output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+
+    logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+    logits = tf.nn.bias_add(logits, output_bias)
+    probabilities = tf.nn.softmax(logits, axis=-1)
+    log_probs = tf.nn.log_softmax(logits, axis=-1)
+
+    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+
+    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
+    loss = tf.reduce_mean(per_example_loss)
+
+    return (loss, per_example_loss, logits, probabilities)
+
+def create_model_with_cid(bert_config, is_training, input_ids, input_mask, segment_ids, input_cids,
+                 labels, num_labels, use_one_hot_embeddings):
+  """Creates a classification model."""
+  model = modeling.BertModel(
+      config=bert_config,
+      is_training=is_training,
+      input_ids=input_ids,
+      input_mask=input_mask,
+      token_type_ids=segment_ids,
+      input_cids=input_cids,
       use_one_hot_embeddings=use_one_hot_embeddings)
 
   # In the demo, we are doing a simple classification task on the entire
@@ -819,7 +906,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -833,6 +920,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     input_mask = features["input_mask"]
     segment_ids = features["segment_ids"]
     label_ids = features["label_ids"]
+    input_cids = features["input_cids"] if "input_cids" in features else None # *ADDED*
     is_real_example = None
     if "is_real_example" in features:
       is_real_example = tf.cast(features["is_real_example"], dtype=tf.float32)
@@ -841,7 +929,11 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-    if do_kd:
+    if use_cid:
+      (total_loss, per_example_loss, logits, probabilities) = create_model_with_cid(
+          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids, input_cids,
+          num_labels, use_one_hot_embeddings)
+    elif do_kd:
       (total_loss, per_example_loss, logits, probabilities) = create_model_kd(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
           num_labels, use_one_hot_embeddings)
@@ -994,7 +1086,8 @@ def main(_):
       "mnli": MnliProcessor,
       "mrpc": MrpcProcessor,
       "xnli": XnliProcessor,
-      "tltc": TltcProcessor
+      "tltc": TltcProcessor,
+      "tltccid": TltcProcessorWithCid
   }
 
   tokenization.validate_case_matches_checkpoint(FLAGS.do_lower_case,
@@ -1051,27 +1144,17 @@ def main(_):
         len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
 
-  if FLAGS.do_kd:
-    model_fn = model_fn_builder(
-        bert_config=bert_config,
-        num_labels=len(label_list),
-        init_checkpoint=FLAGS.init_checkpoint,
-        learning_rate=FLAGS.learning_rate,
-        num_train_steps=num_train_steps,
-        num_warmup_steps=num_warmup_steps,
-        use_tpu=FLAGS.use_tpu,
-        use_one_hot_embeddings=FLAGS.use_tpu,
-        do_kd=True)
-  else:
-    model_fn = model_fn_builder(
-        bert_config=bert_config,
-        num_labels=len(label_list),
-        init_checkpoint=FLAGS.init_checkpoint,
-        learning_rate=FLAGS.learning_rate,
-        num_train_steps=num_train_steps,
-        num_warmup_steps=num_warmup_steps,
-        use_tpu=FLAGS.use_tpu,
-        use_one_hot_embeddings=FLAGS.use_tpu)
+  model_fn = model_fn_builder(
+    bert_config=bert_config,
+    num_labels=len(label_list),
+    init_checkpoint=FLAGS.init_checkpoint,
+    learning_rate=FLAGS.learning_rate,
+    num_train_steps=num_train_steps,
+    num_warmup_steps=num_warmup_steps,
+    use_tpu=FLAGS.use_tpu,
+    use_one_hot_embeddings=FLAGS.use_tpu,
+    do_kd=FLAGS.do_kd,
+    use_cid=FLAGS.use_cid)
 
   # If TPU is not available, this will fall back to normal Estimator on CPU
   # or GPU.

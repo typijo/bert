@@ -141,6 +141,7 @@ class BertModel(object):
                input_ids,
                input_mask=None,
                token_type_ids=None,
+               input_cids=None,
                use_one_hot_embeddings=False,
                scope=None):
     """Constructor for BertModel.
@@ -152,6 +153,7 @@ class BertModel(object):
       input_ids: int32 Tensor of shape [batch_size, seq_length].
       input_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
       token_type_ids: (optional) int32 Tensor of shape [batch_size, seq_length].
+      input_cids: (optional) int32 Tensor of shape [batch_size, 1]. *ADDED*
       use_one_hot_embeddings: (optional) bool. Whether to use one-hot word
         embeddings or tf.embedding_lookup() for the word embeddings.
       scope: (optional) variable scope. Defaults to "bert".
@@ -242,6 +244,19 @@ class BertModel(object):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token. We assume that this has been pre-trained
         first_token_tensor = tf.squeeze(self.sequence_output[:, 0:1, :], axis=1)
+
+        # *ADDED* concat first_token_tensor and cid embeddings
+        if scope == "with_cid":
+          (self.embedding_cid, self.embedding_table_cid) = embedding_lookup(
+            input_ids=input_cids,
+            vocab_size=config.clist_size,
+            embedding_size=config.hidden_size,
+            initializer_range=config.initializer_range,
+            word_embedding_name="cid_embeddings",
+            use_one_hot_embeddings=use_one_hot_embeddings,
+            trainable=is_training)
+          first_token_tensor = tf.concat([first_token_tensor, self.embedding_cid], axis=1)
+
         self.pooled_output = tf.layers.dense(
             first_token_tensor,
             config.hidden_size,
