@@ -927,7 +927,10 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
+    tf.logging.info(features.keys())
+
     if use_cid:
+      tf.logging.info("using model_with_cid")
       (total_loss, per_example_loss, logits, probabilities) = create_model_with_cid(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids, input_cids,
           num_labels, use_one_hot_embeddings)
