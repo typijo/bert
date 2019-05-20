@@ -660,9 +660,6 @@ def file_based_convert_examples_to_features(
       features["input_cids"] = create_int_feature(feature.input_cid)
     features["is_real_example"] = create_int_feature(
         [int(feature.is_real_example)])
-    
-    if ex_index % 10000 == 0:
-      tf.logging.info(str(features))
 
     tf_example = tf.train.Example(features=tf.train.Features(feature=features))
     writer.write(tf_example.SerializeToString())
@@ -1074,6 +1071,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
     feature = convert_single_example(ex_index, example, label_list,
                                      max_seq_length, tokenizer)
+
+    if ex_index % 10000 == 0:
+      tf.logging.info("cid: {}".format(feature.input_cid))
 
     features.append(feature)
   return features
