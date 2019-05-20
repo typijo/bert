@@ -248,8 +248,6 @@ class BertModel(object):
 
         # *ADDED* concat first_token_tensor and cid embeddings
         if scope == "with_cid":
-          print("entered with_cid logic")
-          print(input_cids)
           (self.embedding_cid, self.embedding_table_cid) = embedding_lookup(
             input_ids=input_cids,
             vocab_size=config.clist_size,
@@ -258,9 +256,7 @@ class BertModel(object):
             word_embedding_name="cid_embeddings",
             use_one_hot_embeddings=use_one_hot_embeddings,
             trainable=is_training)
-          print("embedding earned")
           first_token_tensor = tf.concat([first_token_tensor, self.embedding_cid], axis=1)
-          print("tensor calculated")
 
         self.pooled_output = tf.layers.dense(
             first_token_tensor,

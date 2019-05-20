@@ -610,7 +610,7 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
   assert len(segment_ids) == max_seq_length
 
   # *ADDED* cid feature
-  input_cid = example.cid
+  input_cid = int(example.cid)
 
   label_id = label_map[example.label]
   if ex_index < 5:
