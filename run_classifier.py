@@ -621,11 +621,8 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
     tf.logging.info("label: %s (id = %d)" % (example.label, label_id))
   
   # *ADDED* cid feature
-  if "cid" in example:
-    input_cid = example["cid"]
-  else:
-    input_cid = None
-
+  input_cid = example.cid
+  
   feature = InputFeatures(
       input_ids=input_ids,
       input_mask=input_mask,
