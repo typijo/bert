@@ -674,6 +674,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
       "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
       "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
       "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
+      "input_cids": tf.FixedLenFeature([], tf.int64),
       "label_ids": tf.FixedLenFeature([], tf.int64),
       "is_real_example": tf.FixedLenFeature([], tf.int64),
   }
@@ -918,7 +919,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     input_mask = features["input_mask"]
     segment_ids = features["segment_ids"]
     label_ids = features["label_ids"]
-    input_cids = features["input_cids"] if "input_cids" in features else None # *ADDED*
+    input_cids = features["input_cids"] if "input_cids" in features.keys() else None # *ADDED*
     is_real_example = None
     if "is_real_example" in features:
       is_real_example = tf.cast(features["is_real_example"], dtype=tf.float32)
@@ -926,8 +927,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
       is_real_example = tf.ones(tf.shape(label_ids), dtype=tf.float32)
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
-
-    tf.logging.info(features.keys())
 
     if use_cid:
       tf.logging.info("using model_with_cid")
@@ -1016,12 +1015,14 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
   all_input_mask = []
   all_segment_ids = []
   all_label_ids = []
+  all_input_cids = []
 
   for feature in features:
     all_input_ids.append(feature.input_ids)
     all_input_mask.append(feature.input_mask)
     all_segment_ids.append(feature.segment_ids)
     all_label_ids.append(feature.label_id)
+    all_input_ids.append(feature.input_cid if feature.input_cid != None else 0)
 
   def input_fn(params):
     """The actual input function."""
@@ -1047,8 +1048,13 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
                 all_segment_ids,
                 shape=[num_examples, seq_length],
                 dtype=tf.int32),
+        "input_cids":
+            tf.constant(
+              all_input_cids, shape=[num_examples],
+              dtype=tf.int32
+            )
         "label_ids":
-            tf.constant(all_label_ids, shape=[num_examples], dtype=tf.int32),
+            tf.constant(all_label_ids, shape=[num_examples], dtype=tf.int32)
     })
 
     if is_training:
