@@ -662,8 +662,8 @@ def file_based_convert_examples_to_features(
         [int(feature.is_real_example)])
     
     if ex_index == 10000:
-      print("10000 th feature")
-      print(features)
+      tf.logging.info("10000 th feature")
+      tf.logging.info(str(features))
 
     tf_example = tf.train.Example(features=tf.train.Features(feature=features))
     writer.write(tf_example.SerializeToString())
