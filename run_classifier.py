@@ -660,6 +660,10 @@ def file_based_convert_examples_to_features(
       features["input_cids"] = create_int_feature(feature.input_cid)
     features["is_real_example"] = create_int_feature(
         [int(feature.is_real_example)])
+    
+    if ex_index == 10000:
+      print("10000 th feature")
+      print(features)
 
     tf_example = tf.train.Example(features=tf.train.Features(feature=features))
     writer.write(tf_example.SerializeToString())
