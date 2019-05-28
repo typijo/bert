@@ -527,7 +527,7 @@ class TltcProcessorWithCid(TltcProcessor):
     return examples
 
 def convert_single_example(ex_index, example, label_list, max_seq_length,
-                           tokenizer):
+                           tokenizer, set_cid_on_segmentids=False):
   """Converts a single `InputExample` into a single `InputFeatures`."""
 
   if isinstance(example, PaddingInputExample):
@@ -547,6 +547,13 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
   tokens_b = None
   if example.text_b:
     tokens_b = tokenizer.tokenize(example.text_b)
+  
+  cid = int(example.cid) if example.cid != None else -1 # *ADDED*
+  def set_segment_id(id):
+    if not set_cid_on_segmentids:
+      return id
+    else:
+      return cid
 
   if tokens_b:
     # Modifies `tokens_a` and `tokens_b` in place so that the total
@@ -576,22 +583,24 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
   # For classification tasks, the first vector (corresponding to [CLS]) is
   # used as the "sentence vector". Note that this only makes sense because
   # the entire model is fine-tuned.
+
+  # *MODIFIED* to introduce cid as segment_ids. without set_cid_on_segmentids flag, it behaves as it was.
   tokens = []
   segment_ids = []
   tokens.append("[CLS]")
-  segment_ids.append(0)
+  segment_ids.append(set_segment_id(0))
   for token in tokens_a:
     tokens.append(token)
-    segment_ids.append(0)
+    segment_ids.append(set_segment_id(0))
   tokens.append("[SEP]")
-  segment_ids.append(0)
+  segment_ids.append(set_segment_id(0))
 
   if tokens_b:
     for token in tokens_b:
       tokens.append(token)
-      segment_ids.append(1)
+      segment_ids.append(set_segment_id(1))
     tokens.append("[SEP]")
-    segment_ids.append(1)
+    segment_ids.append(set_segment_id(1))
 
   input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
@@ -609,8 +618,9 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
   assert len(input_mask) == max_seq_length
   assert len(segment_ids) == max_seq_length
 
-  # *ADDED* cid feature
-  input_cid = int(example.cid) if example.cid != None else -1
+  if not set_cid_on_segmentids:
+    # *ADDED* cid feature
+    input_cid = cid
 
   label_id = label_map[example.label]
   if ex_index < 5:
@@ -635,7 +645,7 @@ def convert_single_example(ex_index, example, label_list, max_seq_length,
 
 
 def file_based_convert_examples_to_features(
-    examples, label_list, max_seq_length, tokenizer, output_file):
+    examples, label_list, max_seq_length, tokenizer, output_file, set_cid_on_segmentids=False):
   """Convert a set of `InputExample`s to a TFRecord file."""
 
   writer = tf.python_io.TFRecordWriter(output_file)
@@ -645,7 +655,7 @@ def file_based_convert_examples_to_features(
       tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
 
     feature = convert_single_example(ex_index, example, label_list,
-                                     max_seq_length, tokenizer)
+                                     max_seq_length, tokenizer, set_cid_on_segmentids)
 
     def create_int_feature(values):
       f = tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
@@ -928,7 +938,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
     is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-    if use_cid:
+    if use_cid and use_cid != "embedding":
       tf.logging.info("using model_with_cid")
       (total_loss, per_example_loss, logits, probabilities) = create_model_with_cid(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids, input_cids,
@@ -1070,7 +1080,7 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
 # This function is not used by this file but is still used by the Colab and
 # people who depend on it.
 def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer):
+                                 tokenizer, set_cid_on_segmentids=False):
   """Convert a set of `InputExample`s to a list of `InputFeatures`."""
 
   features = []
@@ -1079,7 +1089,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
       tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
 
     feature = convert_single_example(ex_index, example, label_list,
-                                     max_seq_length, tokenizer)
+                                     max_seq_length, tokenizer, set_cid_on_segmentids)
 
     features.append(feature)
   return features
