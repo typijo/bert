@@ -526,6 +526,11 @@ class TltcProcessorWithCid(TltcProcessor):
           InputExample(guid=guid, text_a=text_a, text_b=None, cid=cid, label=label))
     return examples
 
+class TltcProcessorWithGlobalCid(TltcProcessorWithCid):
+  def get_labels(self):
+    """See base class."""
+    return [str(i) for i in range(100)] # max 100 terms
+
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer, set_cid_on_segmentids=False):
   """Converts a single `InputExample` into a single `InputFeatures`."""
