@@ -526,7 +526,7 @@ class TltcProcessorWithCid(TltcProcessor):
           InputExample(guid=guid, text_a=text_a, text_b=None, cid=cid, label=label))
     return examples
 
-class TltcProcessorWithGlobalCid(TltcProcessorWithCid):
+class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
   def get_labels(self):
     """See base class."""
     return [str(i) for i in range(100)] # max 100 terms
