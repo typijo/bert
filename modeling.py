@@ -266,9 +266,22 @@ class BertModel(object):
             activation=tf.tanh,
             kernel_initializer=create_initializer(config.initializer_range),
             trainable=is_training)
+        
+        if scope == "mtl": # *ADDED* for multi task learning (output for cid prediction)
+          self.pooled_output_cid = tf.layers.dense(
+            first_token_tensor,
+            config.hidden_size,
+            activation=tf.tanh,
+            kernel_initializer=create_initializer(config.initializer_range),
+            trainable=is_training)
+        else:
+          self.pooled_output_cid = None
 
   def get_pooled_output(self):
     return self.pooled_output
+  
+  def get_pooled_output_cid(self):
+    return self.pooled_output_cid
 
   def get_sequence_output(self):
     """Gets final hidden layer of encoder.

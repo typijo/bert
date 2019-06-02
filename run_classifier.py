@@ -434,6 +434,10 @@ class TltcProcessor(DataProcessor):
   def get_labels(self):
     """See base class."""
     return ["0", "1", "2", "3"] # max four terms
+  
+  def get_labels_cid(self):
+    """See base class."""
+    return [str(i) for i in range(30)] # max 30 term sets
 
   def _create_examples(self, lines, set_type):
     """
@@ -918,9 +922,84 @@ def create_model_with_cid(bert_config, is_training, input_ids, input_mask, segme
     return (loss, per_example_loss, logits, probabilities)
 
 
+def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_ids, input_cids,
+                 labels, num_labels, num_labels_cid, use_one_hot_embeddings):
+  """Creates a classification model."""
+  model = modeling.BertModel(
+      config=bert_config,
+      is_training=is_training,
+      input_ids=input_ids,
+      input_mask=input_mask,
+      token_type_ids=segment_ids,
+      input_cids=input_cids,
+      use_one_hot_embeddings=use_one_hot_embeddings,
+      scope="mtl")
+
+  # In the demo, we are doing a simple classification task on the entire
+  # segment.
+  #
+  # If you want to use the token-level output, use model.get_sequence_output()
+  # instead.
+  output_layer = model.get_pooled_output()
+  output_layer_cid = model.get_pooled_output_cid()
+
+  hidden_size = output_layer.shape[-1].value
+
+  output_weights = tf.get_variable(
+      "output_weights", [num_labels, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  output_bias = tf.get_variable(
+      "output_bias", [num_labels], initializer=tf.zeros_initializer())
+  
+  # *ADDED* weights and bias for cid prediction
+  output_weights_cid = tf.get_variable(
+      "output_weights_cid", [num_labels_cid, hidden_size],
+      initializer=tf.truncated_normal_initializer(stddev=0.02))
+
+  output_bias_cid = tf.get_variable(
+      "output_bias_cid", [num_labels_cid], initializer=tf.zeros_initializer())
+
+  with tf.variable_scope("loss"):
+    if is_training:
+      # I.e., 0.1 dropout
+      output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+      output_layer_cid = tf.nn.dropout(output_layer_cid, keep_prob=0.9)
+
+    # loss for term prediction
+    logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+    logits = tf.nn.bias_add(logits, output_bias)
+    probabilities = tf.nn.softmax(logits, axis=-1)
+    log_probs = tf.nn.log_softmax(logits, axis=-1)
+
+    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+
+    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
+    loss = tf.reduce_mean(per_example_loss)
+
+    # loss for cid prediction
+    logits_cid = tf.matmul(output_layer_cid, output_weights_cid, transpose_b=True)
+    logits_cid = tf.nn.bias_add(logits_cid, output_bias_cid)
+    probabilities_cid = tf.nn.softmax(logits_cid, axis=-1)
+    log_probs_cid = tf.nn.log_softmax(logits_cid, axis=-1)
+
+    one_hot_labels_cid = tf.one_hot(input_cids, depth=num_labels_cid, dtype=tf.float32)
+
+    per_example_loss_cid = -tf.reduce_sum(one_hot_labels_cid * log_probs_cid, axis=-1)
+    loss_cid = tf.reduce_mean(per_example_loss_cid)
+
+    # merge losses (add two losses)
+    loss = tf.add(loss, loss_cid)
+    per_example_loss = tf.add(per_example_loss, per_example_loss_cid)
+    logits = tf.concat([logits, logits_cid], axis=1)
+    probabilities = tf.concat([probabilities, probabilities_cid], axis=1) # [term probs, cid probs] per example
+
+    return (loss, per_example_loss, logits, probabilities)
+
+
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False, use_cid=False):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, num_labels_cid=1):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -946,8 +1025,13 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     if use_cid and use_cid != "embedding":
       tf.logging.info("using model_with_cid")
       (total_loss, per_example_loss, logits, probabilities) = create_model_with_cid(
-          bert_config, is_training, input_ids, input_mask, segment_ids, label_ids, input_cids,
+          bert_config, is_training, input_ids, input_mask, segment_ids, input_cids, label_ids,
           num_labels, use_one_hot_embeddings)
+    elif use_mtl:
+      tf.logging.info("using model_mtl")
+      (total_loss, per_example_loss, logits, probabilities) = create_model_mtl(
+          bert_config, is_training, input_ids, input_mask, segment_ids, input_cids, label_ids,
+          num_labels, num_labels_cid, use_one_hot_embeddings)
     elif do_kd:
       (total_loss, per_example_loss, logits, probabilities) = create_model_kd(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
@@ -1137,6 +1221,10 @@ def main(_):
   processor = processors[task_name]()
 
   label_list = processor.get_labels()
+  if hasattr(processor, "get_labels_cid"): # get cid labels if it is a tltccid* task
+    label_list_cid = processor.get_labels_cid()
+  else:
+    label_list_cid = []
 
   tokenizer = tokenization.FullTokenizer(
       vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
@@ -1176,7 +1264,9 @@ def main(_):
     use_tpu=FLAGS.use_tpu,
     use_one_hot_embeddings=FLAGS.use_tpu,
     do_kd=FLAGS.do_kd,
-    use_cid=FLAGS.use_cid)
+    use_cid=FLAGS.use_cid,
+    use_mtl=FLAGS.use_mtl,
+    num_labels_cid=len(label_list_cid))
 
   # If TPU is not available, this will fall back to normal Estimator on CPU
   # or GPU.
