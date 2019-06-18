@@ -923,7 +923,7 @@ def create_model_with_cid(bert_config, is_training, input_ids, input_mask, segme
 
 
 def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_ids, input_cids,
-                 labels, num_labels, num_labels_cid, use_one_hot_embeddings):
+                 labels, num_labels, num_labels_cid, use_one_hot_embeddings, optimize_weight=False):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -940,16 +940,16 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
   #
   # If you want to use the token-level output, use model.get_sequence_output()
   # instead.
-  output_layer = model.get_pooled_output()
+  output_layer_tid = model.get_pooled_output()
   output_layer_cid = model.get_pooled_output_cid()
 
-  hidden_size = output_layer.shape[-1].value
+  hidden_size = output_layer_tid.shape[-1].value
 
-  output_weights = tf.get_variable(
+  output_weights_tid = tf.get_variable(
       "output_weights", [num_labels, hidden_size],
       initializer=tf.truncated_normal_initializer(stddev=0.02))
 
-  output_bias = tf.get_variable(
+  output_bias_tid = tf.get_variable(
       "output_bias", [num_labels], initializer=tf.zeros_initializer())
   
   # *ADDED* weights and bias for cid prediction
@@ -959,23 +959,25 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
 
   output_bias_cid = tf.get_variable(
       "output_bias_cid", [num_labels_cid], initializer=tf.zeros_initializer())
+  
+  # *ADDED* weights for multitask
+  loss_weights = tf.get_variable(
+      "loss_weights", [2], initializer=tf.zeros_initializer())
 
   with tf.variable_scope("loss"):
     if is_training:
       # I.e., 0.1 dropout
-      output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+      output_layer_tid = tf.nn.dropout(output_layer_tid, keep_prob=0.9)
       output_layer_cid = tf.nn.dropout(output_layer_cid, keep_prob=0.9)
 
     # loss for term prediction
-    logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-    logits = tf.nn.bias_add(logits, output_bias)
-    probabilities = tf.nn.softmax(logits, axis=-1)
-    log_probs = tf.nn.log_softmax(logits, axis=-1)
+    logits_tid = tf.matmul(output_layer_tid, output_weights_tid, transpose_b=True)
+    logits_tid = tf.nn.bias_add(logits_tid, output_bias_tid)
+    probabilities_tid = tf.nn.softmax(logits_tid, axis=-1)
+    log_probs_tid = tf.nn.log_softmax(logits_tid, axis=-1)
 
-    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
-
-    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-    loss = tf.reduce_mean(per_example_loss)
+    one_hot_labels_tid = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+    per_example_loss_tid = -tf.reduce_sum(one_hot_labels_tid * log_probs_tid, axis=-1)
 
     # loss for cid prediction
     logits_cid = tf.matmul(output_layer_cid, output_weights_cid, transpose_b=True)
@@ -984,22 +986,34 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
     log_probs_cid = tf.nn.log_softmax(logits_cid, axis=-1)
 
     one_hot_labels_cid = tf.one_hot(input_cids, depth=num_labels_cid, dtype=tf.float32)
-
     per_example_loss_cid = -tf.reduce_sum(one_hot_labels_cid * log_probs_cid, axis=-1)
-    loss_cid = tf.reduce_mean(per_example_loss_cid)
 
-    # merge losses (add two losses)
-    loss = tf.add(loss, loss_cid)
-    per_example_loss = tf.add(per_example_loss, per_example_loss_cid)
-    logits = tf.concat([logits, logits_cid], axis=1)
-    probabilities = tf.concat([probabilities, probabilities_cid], axis=1) # [term probs, cid probs] per example
+    if optimize_weight: # merge losses (optimize weights)
+      loss_weights_normalized = tf.nn.softmax(loss_weights, axis=-1)
+
+      per_example_loss_stacked = tf.stack([per_example_loss_tid, per_example_loss_cid], axis=1)
+      per_example_loss_weighted = tf.matmul(per_example_loss_stacked, loss_weights_normalized)
+
+      per_example_loss = tf.reduce_sum(per_example_loss_weighted, axis=0)
+      loss = tf.reduce_mean(per_example_loss)
+
+      logits = tf.concat([logits_tid, logits_cid], axis=1)
+      probabilities = tf.concat([probabilities_tid, probabilities_cid], axis=1) # [term probs, cid probs] per example
+
+    else: # merge losses (just add two losses)
+      per_example_loss = tf.add(per_example_loss_tid, per_example_loss_cid)
+      
+      loss = tf.reduce_mean(per_example_loss)
+
+      logits = tf.concat([logits_tid, logits_cid], axis=1)
+      probabilities = tf.concat([probabilities_tid, probabilities_cid], axis=1) # [term probs, cid probs] per example
 
     return (loss, per_example_loss, logits, probabilities)
 
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, num_labels_cid=1):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -1032,6 +1046,11 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
       (total_loss, per_example_loss, logits, probabilities) = create_model_mtl(
           bert_config, is_training, input_ids, input_mask, segment_ids, input_cids, label_ids,
           num_labels, num_labels_cid, use_one_hot_embeddings)
+    elif use_mtl_optim:
+      tf.logging.info("using model_mtl optimized")
+      (total_loss, per_example_loss, logits, probabilities) = create_model_mtl(
+          bert_config, is_training, input_ids, input_mask, segment_ids, input_cids, label_ids,
+          num_labels, num_labels_cid, use_one_hot_embeddings, optimize_weight=True)
     elif do_kd:
       (total_loss, per_example_loss, logits, probabilities) = create_model_kd(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
