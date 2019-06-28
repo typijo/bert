@@ -830,7 +830,7 @@ def create_model_kd(bert_config, is_training, input_ids, input_mask, segment_ids
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings, use_affinity_loss=False):
+                 labels, num_labels, use_one_hot_embeddings, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=1):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -877,13 +877,14 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       log_probs = tf.nn.log_softmax(logits, axis=-1)
       
       num_batch = tf.shape(output_layer)[0]
-
+      
+      
       ######
       ## hyper-parameters #TODO let hyper-parameters be arguments
       ######
-      Sigma = 1
-      Lambda = 0.5
-      
+      Sigma = affloss_sigma
+      Lambda = affloss_lambda
+
       ######
       ## calculate loss_mm [batch_size]
       ######
@@ -1100,7 +1101,7 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1, use_affinity_loss=False):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=0.5):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -1145,7 +1146,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     else:
       (total_loss, per_example_loss, logits, probabilities) = create_model(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-          num_labels, use_one_hot_embeddings, use_affinity_loss=use_affinity_loss)
+          num_labels, use_one_hot_embeddings, use_affinity_loss=use_affinity_loss, affloss_sigma=affloss_sigma, affloss_lambda=affloss_lambda)
 
     tvars = tf.trainable_variables()
     initialized_variable_names = {}
