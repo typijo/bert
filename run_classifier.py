@@ -830,7 +830,7 @@ def create_model_kd(bert_config, is_training, input_ids, input_mask, segment_ids
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings):
+                 labels, num_labels, use_one_hot_embeddings, use_affinity_loss=False):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -855,21 +855,110 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
   output_bias = tf.get_variable(
       "output_bias", [num_labels], initializer=tf.zeros_initializer())
-
+    
   with tf.variable_scope("loss"):
-    if is_training:
-      # I.e., 0.1 dropout
-      output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+    if use_affinity_loss:
+      '''
+      affinity loss
+      Idea from: Munawar Hayat, Salman Khan, Waqas Zamir, Jianbing Shen, Ling Shao.
+      Max-margin Class Imbalanced Learning with Gaussian Affinity. 2019.
+      https://arxiv.org/abs/1901.07711
 
-    logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-    logits = tf.nn.bias_add(logits, output_bias)
-    probabilities = tf.nn.softmax(logits, axis=-1)
-    log_probs = tf.nn.log_softmax(logits, axis=-1)
+      referred: https://qiita.com/koshian2/items/20af1548125c5c32dda9
+      '''
+      if is_training:
+        # I.e., 0.1 dropout
+        output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
 
-    one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+      # logits and probabilities are same as softmax crossentropy version
+      logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+      #logits = tf.nn.bias_add(logits, output_bias) # except adding bias
+      probabilities = tf.nn.softmax(logits, axis=-1)
+      log_probs = tf.nn.log_softmax(logits, axis=-1)
+      
+      num_batch = tf.shape(output_layer)[0]
 
-    per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-    loss = tf.reduce_mean(per_example_loss)
+      ######
+      ## hyper-parameters #TODO let hyper-parameters be arguments
+      ######
+      Sigma = 1
+      Lambda = 0.5
+      
+      ######
+      ## calculate loss_mm [batch_size]
+      ######
+
+      # output_layer (f) : [batch_size, num_hidden]
+      # output_weights (w) : [num_hidden, num_labels]
+      # here, |x-y|_2^2 = |x|_2^2 + |y|_2^2 - 2*matmul(x,y)
+      fw = tf.matmul(output_layer, output_weights, transpose_b=True) # [batch_size, num_labels]
+
+      ff = tf.expand_dims(tf.norm(output_layer, ord=2, axis=1), -1) # [batch_size, 1]
+      ff2 = tf.tile(ff, [1, num_labels]) # [batch_size, num_labels]
+      
+      ww = tf.expand_dims(tf.norm(tf.transpose(output_weights), ord=2, axis=1), -1) # [num_labels, 1]
+      ww2 = tf.transpose(tf.tile(ww, [1, num_batch])) # [batch_size, num_labels]
+      
+      # calculate distance matrix d [batch_size, num_labels]
+      d = tf.exp(-(ff2**2 + ww2**2 - 2*fw) / Sigma) # [batch_size, num_labels]
+
+      # used to get d(fi, wyi)
+      mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels]
+
+      # get d(fi, wyi)
+      dyi = tf.reduce_sum(tf.multiply(mask_wji, d), axis=1, keepdims=True) # [batch_size, 1]
+      
+      # calculate unpacked loss_mm
+      # element (i,j) is lambda + d(fi, wj) - d(fi, wyj)
+      loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels]
+
+      # used to remove element (i,j) s.t. j == yj
+      mask_wji_neg = tf.one_hot(labels, depth=num_labels, on_value=0, off_value=1, dtype=tf.float32) # [batch_size, num_labels]
+
+      # finally calculate loss_mm
+      loss_mm = tf.reduce_sum(tf.multiply(mask_wji_neg, loss_mm_unpacked), axis=1) # [batch_size]
+      
+      ######
+      ## calculate diversity regualrizer R(w) [1]
+      ######
+
+      # calculate |wj - wk|_2^2 s.t. j<k      
+      wjk = tf.matmul(output_weights, output_weights, transpose_b=True) # [num_labels, num_labels]
+
+      wjj = tf.expand_dims(tf.norm(output_weights, ord=2, axis=1), -1) # [num_labels, 1]
+      wjj2 = tf.tile(wjj, [1, num_labels]) # [num_labels, num_labels]
+      wkk2 = tf.transpose(tf.tile(wjj, [1, num_labels])) # [num_labels, num_labels]
+      
+      wj_k = wjj2**2 + wkk2**2 - 2*wjk # [num_labels, num_labels]
+      wj_k_upper = tf.matrix_band_part(wj_k, 0, -1) - tf.matrix_band_part(wj_k, 0, 0) # [num_labels, num_labels], values only at upper triangle (excluding diag)
+
+      mu = 2/(num_labels**2 - num_labels) * tf.reduce_sum(wj_k_upper) # scalar
+
+      rw = tf.reduce_mean((wj_k_upper - mu)**2) # scalar
+      
+      ######
+      ## earn per example-loss
+      ######
+      per_example_loss = loss_mm + rw # [batch_size]
+      loss = tf.reduce_mean(per_example_loss)
+      
+    else:
+      '''
+      normal softmax crossentropy
+      '''
+      if is_training:
+        # I.e., 0.1 dropout
+        output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
+
+      logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+      logits = tf.nn.bias_add(logits, output_bias)
+      probabilities = tf.nn.softmax(logits, axis=-1)
+      log_probs = tf.nn.log_softmax(logits, axis=-1)
+
+      one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
+
+      per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
+      loss = tf.reduce_mean(per_example_loss)
 
     return (loss, per_example_loss, logits, probabilities)
 
@@ -1011,7 +1100,7 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1, use_affinity_loss=False):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -1056,7 +1145,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     else:
       (total_loss, per_example_loss, logits, probabilities) = create_model(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-          num_labels, use_one_hot_embeddings)
+          num_labels, use_one_hot_embeddings, use_affinity_loss=use_affinity_loss)
 
     tvars = tf.trainable_variables()
     initialized_variable_names = {}
