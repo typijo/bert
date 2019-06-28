@@ -896,7 +896,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       ff = tf.expand_dims(tf.norm(output_layer, ord=2, axis=1), -1) # [batch_size, 1]
       ff2 = tf.tile(ff, [1, num_labels]) # [batch_size, num_labels]
       
-      ww = tf.expand_dims(tf.norm(tf.transpose(output_weights), ord=2, axis=1), -1) # [num_labels, 1]
+      ww = tf.expand_dims(tf.norm(output_weights, ord=2, axis=1), -1) # [num_labels, 1]
       ww2 = tf.transpose(tf.tile(ww, [1, num_batch])) # [batch_size, num_labels]
       
       # calculate distance matrix d [batch_size, num_labels]
