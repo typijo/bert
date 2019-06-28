@@ -892,50 +892,45 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       # output_layer (f) : [batch_size, num_hidden]
       # output_weights (w) : [num_labels, num_hidden]
       # here, |x-y|_2^2 = |x|_2^2 + |y|_2^2 - 2*matmul(x,y)
-      fw = tf.matmul(output_layer, output_weights, transpose_b=True) # [batch_size, num_labels]
+      f_expand = tf.expand_dims(output_layer, axis=1) # [batch_size, 1, num_hidden]
+      w_expand = tf.expand_dims(output_weights, axis=0) # [1, num_labels, num_hidden]
+      fw_norm = tf.reduce_sum((f_expand - w_expand)**2, axis=-1)
+      # tile f_expand and w_expand to [batch_size, num_labels, num_hidden]
+      # f_expand[i][k] = F_i for all k
+      # w_expand[k][j] = W_j for all k
+      # (f_expand-w_expand)**2 [i][j] = (F_i-W_j)**2
+      # after reduce_sum, fw_norm[i][j] = |F_i-W_j|_2^2. thus, fw_norm [batch_size, num_labels]
 
-      ff = tf.expand_dims(tf.norm(output_layer, ord=2, axis=1), -1) # [batch_size, 1]
-      ff2 = tf.tile(ff, [1, num_labels]) # [batch_size, num_labels]
-      
-      ww = tf.expand_dims(tf.norm(output_weights, ord=2, axis=1), -1) # [num_labels, 1]
-      ww2 = tf.transpose(tf.tile(ww, [1, num_batch])) # [batch_size, num_labels]
-      
-      # calculate distance matrix d [batch_size, num_labels]
-      d = tf.exp(-(ff2**2 + ww2**2 - 2*fw) / Sigma) # [batch_size, num_labels]
+      d = tf.exp(-fw_norm/Sigma) # [batch_size, num_labels]
 
       # used to get d(fi, wyi)
       mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels]
 
       # get d(fi, wyi)
-      dyi = tf.reduce_sum(tf.multiply(mask_wji, d), axis=1, keepdims=True) # [batch_size, 1]
+      dyi = tf.reduce_sum(mask_wji * d, axis=1, keepdims=True) # [batch_size, 1]
       
       # calculate unpacked loss_mm
       # element (i,j) is lambda + d(fi, wj) - d(fi, wyj)
       loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels]
 
-      # used to remove element (i,j) s.t. j == yj
-      mask_wji_neg = tf.one_hot(labels, depth=num_labels, on_value=0.0, off_value=1.0, dtype=tf.float32) # [batch_size, num_labels]
-
       # finally calculate loss_mm
-      loss_mm = tf.reduce_sum(tf.multiply(mask_wji_neg, loss_mm_unpacked), axis=1) # [batch_size]
+      loss_mm = tf.reduce_sum((1.0-mask_wji) * loss_mm_unpacked, axis=1) # [batch_size]
       
       ######
       ## calculate diversity regualrizer R(w) [1]
       ######
 
-      # calculate |wj - wk|_2^2 s.t. j<k      
-      wjk = tf.matmul(output_weights, output_weights, transpose_b=True) # [num_labels, num_labels]
+      # calculate |wj - wk|_2^2 s.t. j<k
+      wj = tf.expand_dims(output_weights, axis=1) # [num_labels, 1, num_hidden]
+      wk = tf.expand_dims(output_weights, axis=0) # [1, num_labels, num_hidden]
+      wjk_norm = tf.reduce_sum((wj - wk) ** 2, axis=-1) # [num_labels, num_labels]
 
-      wjj = tf.expand_dims(tf.norm(output_weights, ord=2, axis=1), -1) # [num_labels, 1]
-      wjj2 = tf.tile(wjj, [1, num_labels]) # [num_labels, num_labels]
-      wkk2 = tf.transpose(tf.tile(wjj, [1, num_labels])) # [num_labels, num_labels]
-      
-      wj_k = wjj2**2 + wkk2**2 - 2*wjk # [num_labels, num_labels]
-      wj_k_upper = tf.matrix_band_part(wj_k, 0, -1) - tf.matrix_band_part(wj_k, 0, 0) # [num_labels, num_labels], values only at upper triangle (excluding diag)
+      wjk_upper = tf.matrix_band_part(wjk_norm, 0, -1) - tf.matrix_band_part(wjk_norm, 0, 0) # [num_labels, num_labels], values only at upper triangle (diag elements are already 0)
 
-      mu = 2/(num_labels**2 - num_labels) * tf.reduce_sum(wj_k_upper) # scalar
+      mu = 2.0/(num_labels**2.0 - num_labels) * tf.reduce_sum(wjk_upper) # scalar
 
-      rw = tf.reduce_mean((wj_k_upper - mu)**2) # scalar
+      residuals = tf.matrix_band_part((wjk_upper - mu)**2, 0, -1) - tf.matrix_band_part((wjk_upper - mu)**2, 0, 0) # [num_labels, num_labels], values only upper triangle
+      rw = 2.0/(num_labels**2.0 - num_labels) * tf.reduce_sum(residuals) # scalar
       
       ######
       ## earn per example-loss
