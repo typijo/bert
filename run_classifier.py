@@ -889,7 +889,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       ######
 
       # output_layer (f) : [batch_size, num_hidden]
-      # output_weights (w) : [num_hidden, num_labels]
+      # output_weights (w) : [num_labels, num_hidden]
       # here, |x-y|_2^2 = |x|_2^2 + |y|_2^2 - 2*matmul(x,y)
       fw = tf.matmul(output_layer, output_weights, transpose_b=True) # [batch_size, num_labels]
 
@@ -913,7 +913,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels]
 
       # used to remove element (i,j) s.t. j == yj
-      mask_wji_neg = tf.one_hot(labels, depth=num_labels, on_value=0, off_value=1, dtype=tf.float32) # [batch_size, num_labels]
+      mask_wji_neg = tf.one_hot(labels, depth=num_labels, on_value=0.0, off_value=1.0, dtype=tf.float32) # [batch_size, num_labels]
 
       # finally calculate loss_mm
       loss_mm = tf.reduce_sum(tf.multiply(mask_wji_neg, loss_mm_unpacked), axis=1) # [batch_size]
