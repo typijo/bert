@@ -830,7 +830,7 @@ def create_model_kd(bert_config, is_training, input_ids, input_mask, segment_ids
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=1):
+                 labels, num_labels, use_one_hot_embeddings, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=1, affloss_m=1):
   """Creates a classification model."""
   model = modeling.BertModel(
       config=bert_config,
@@ -849,12 +849,17 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
   hidden_size = output_layer.shape[-1].value
 
-  output_weights = tf.get_variable(
-      "output_weights", [num_labels, hidden_size],
-      initializer=tf.truncated_normal_initializer(stddev=0.02))
+  if use_affinity_loss:
+    output_weights = tf.get_variable(
+        "output_weights", [num_labels, affloss_m, hidden_size],
+        initializer=tf.truncated_normal_initializer(stddev=0.02))
+  else:
+    output_weights = tf.get_variable(
+        "output_weights", [num_labels, hidden_size],
+        initializer=tf.truncated_normal_initializer(stddev=0.02))
 
-  output_bias = tf.get_variable(
-      "output_bias", [num_labels], initializer=tf.zeros_initializer())
+    output_bias = tf.get_variable(
+        "output_bias", [num_labels], initializer=tf.zeros_initializer())
     
   with tf.variable_scope("loss"):
     if use_affinity_loss:
@@ -871,13 +876,11 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
         output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
 
       # logits and probabilities are same as softmax crossentropy version
-      logits = tf.matmul(output_layer, output_weights, transpose_b=True)
+      logits_allm = tf.tensordot(output_layer, output_weights, axes=[1,2]) # [num_batch, num_hidden] * [num_labels, m, num_hidden] -> [num_batch, num_labels, m]
+      logits = tf.reduce_max(logits_allm, axis=-1) # [num_batch, num_labels]
       #logits = tf.nn.bias_add(logits, output_bias) # except adding bias
       probabilities = tf.nn.softmax(logits, axis=-1)
       log_probs = tf.nn.log_softmax(logits, axis=-1)
-      
-      num_batch = tf.shape(output_layer)[0]
-      
       
       ######
       ## hyper-parameters #TODO let hyper-parameters be arguments
@@ -892,45 +895,51 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       # output_layer (f) : [batch_size, num_hidden]
       # output_weights (w) : [num_labels, num_hidden]
       # here, |x-y|_2^2 = |x|_2^2 + |y|_2^2 - 2*matmul(x,y)
-      f_expand = tf.expand_dims(output_layer, axis=1) # [batch_size, 1, num_hidden]
-      w_expand = tf.expand_dims(output_weights, axis=0) # [1, num_labels, num_hidden]
+      f_expand = tf.expand_dims(tf.expand_dims(output_layer, axis=1), axis=1) # [batch_size, 1, 1, num_hidden]
+      w_expand = tf.expand_dims(output_weights, axis=0) # [1, num_labels, m, num_hidden]
       fw_norm = tf.reduce_sum((f_expand - w_expand)**2, axis=-1)
-      # tile f_expand and w_expand to [batch_size, num_labels, num_hidden]
-      # f_expand[i][k] = F_i for all k
-      # w_expand[k][j] = W_j for all k
-      # (f_expand-w_expand)**2 [i][j] = (F_i-W_j)**2
-      # after reduce_sum, fw_norm[i][j] = |F_i-W_j|_2^2. thus, fw_norm [batch_size, num_labels]
+      # tile f_expand and w_expand to [batch_size, num_labels, m, num_hidden]
+      # f_expand[i][l][k] = F_i for all k, l
+      # w_expand[k][l][j] = W_l,j for all k
+      # (f_expand-w_expand)**2 [i][l][j] = (F_i-W_j,l)**2
+      # after reduce_sum, fw_norm[i][l][j] = |F_i-W_j,l|_2^2. thus, fw_norm [batch_size, num_labels, m]
 
-      d = tf.exp(-fw_norm/Sigma) # [batch_size, num_labels]
+      d = tf.exp(-fw_norm/Sigma) # [batch_size, num_labels, m]
 
       # used to get d(fi, wyi)
-      mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels]
+      mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels, m]
 
       # get d(fi, wyi)
-      dyi = tf.reduce_sum(mask_wji * d, axis=1, keepdims=True) # [batch_size, 1]
+      dyi = tf.reduce_sum(mask_wji * d, axis=1, keepdims=True) # [batch_size, 1, m]
       
       # calculate unpacked loss_mm
       # element (i,j) is lambda + d(fi, wj) - d(fi, wyj)
-      loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels]
+      loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels, m]
 
-      # finally calculate loss_mm
-      loss_mm = tf.reduce_sum((1.0-mask_wji) * loss_mm_unpacked, axis=1) # [batch_size]
+      # calculate loss_mm
+      loss_mm_allm = tf.reduce_sum((1.0-mask_wji) * loss_mm_unpacked, axis=1) # [batch_size, m]
+
+      # finally take maximum ones
+      loss_mm = tf.reduce_max(loss_mm_allm, axis=-1) # [batch_size]
       
       ######
       ## calculate diversity regualrizer R(w) [1]
       ######
 
+      mc = affloss_m * num_labels # used to concat weights of different clusters
+
       # calculate |wj - wk|_2^2 s.t. j<k
-      wj = tf.expand_dims(output_weights, axis=1) # [num_labels, 1, num_hidden]
-      wk = tf.expand_dims(output_weights, axis=0) # [1, num_labels, num_hidden]
-      wjk_norm = tf.reduce_sum((wj - wk) ** 2, axis=-1) # [num_labels, num_labels]
+      output_weights_reshaped = tf.reshape(output_weights, [mc, hidden_size]) # [num_labels, m, num_hidden] -> [mc, num_hidden]
+      wj = tf.expand_dims(output_weights_reshaped, axis=1) # [mc, 1, num_hidden]
+      wk = tf.expand_dims(output_weights_reshaped, axis=0) # [1, mc, num_hidden]
+      wjk_norm = tf.reduce_sum((wj - wk) ** 2, axis=-1) # [mc, mc]
 
-      wjk_upper = tf.matrix_band_part(wjk_norm, 0, -1) - tf.matrix_band_part(wjk_norm, 0, 0) # [num_labels, num_labels], values only at upper triangle (diag elements are already 0)
+      wjk_upper = tf.matrix_band_part(wjk_norm, 0, -1) - tf.matrix_band_part(wjk_norm, 0, 0) # [mc, mc], values only at upper triangle (diag elements are already 0)
 
-      mu = 2.0/(num_labels**2.0 - num_labels) * tf.reduce_sum(wjk_upper) # scalar
+      mu = 2.0/(mc**2.0 - mc) * tf.reduce_sum(wjk_upper) # scalar
 
-      residuals = tf.matrix_band_part((wjk_upper - mu)**2, 0, -1) - tf.matrix_band_part((wjk_upper - mu)**2, 0, 0) # [num_labels, num_labels], values only upper triangle
-      rw = 2.0/(num_labels**2.0 - num_labels) * tf.reduce_sum(residuals) # scalar
+      residuals = tf.matrix_band_part((wjk_upper - mu)**2, 0, -1) - tf.matrix_band_part((wjk_upper - mu)**2, 0, 0) # [mc, mc], values only upper triangle
+      rw = 2.0/(mc**2.0 - mc) * tf.reduce_sum(residuals) # scalar
       
       ######
       ## earn per example-loss
@@ -1096,7 +1105,7 @@ def create_model_mtl(bert_config, is_training, input_ids, input_mask, segment_id
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                      num_train_steps, num_warmup_steps, use_tpu,
-                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=0.5):
+                     use_one_hot_embeddings, do_kd=False, use_cid=False, use_mtl=False, use_mtl_optim=False, num_labels_cid=1, use_affinity_loss=False, affloss_sigma=1, affloss_lambda=0.5, affloss_m=1):
   """Returns `model_fn` closure for TPUEstimator."""
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
@@ -1141,7 +1150,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
     else:
       (total_loss, per_example_loss, logits, probabilities) = create_model(
           bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
-          num_labels, use_one_hot_embeddings, use_affinity_loss=use_affinity_loss, affloss_sigma=affloss_sigma, affloss_lambda=affloss_lambda)
+          num_labels, use_one_hot_embeddings, use_affinity_loss=use_affinity_loss, affloss_sigma=affloss_sigma, affloss_lambda=affloss_lambda, affloss_m=affloss_m)
 
     tvars = tf.trainable_variables()
     initialized_variable_names = {}
