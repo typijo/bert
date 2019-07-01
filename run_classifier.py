@@ -908,7 +908,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
       # used to get d(fi, wyi)
       mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels]
-      mask_wji_allm = tf.tile(tf.expand_dims(mask_wji, -1), [1, 1, m]) # [batch_size, num_labels, m]
+      mask_wji_allm = tf.tile(tf.expand_dims(mask_wji, -1), [1, 1, affloss_m]) # [batch_size, num_labels, m]
 
       # get d(fi, wyi)
       dyi = tf.reduce_sum(mask_wji_allm * d, axis=1, keepdims=True) # [batch_size, 1, m]
