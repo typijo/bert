@@ -904,25 +904,22 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       # (f_expand-w_expand)**2 [i][l][j] = (F_i-W_j,l)**2
       # after reduce_sum, fw_norm[i][l][j] = |F_i-W_j,l|_2^2. thus, fw_norm [batch_size, num_labels, m]
 
-      d = tf.exp(-fw_norm/Sigma) # [batch_size, num_labels, m]
+      d_all = tf.exp(-fw_norm/Sigma) # [batch_size, num_labels, m]
+      d = tf.reduce_max(d_all, axis=-1) # [batch_size, num_labels]
 
       # used to get d(fi, wyi)
       mask_wji = tf.one_hot(labels, depth=num_labels, dtype=tf.float32) # [batch_size, num_labels]
-      mask_wji_allm = tf.tile(tf.expand_dims(mask_wji, -1), [1, 1, affloss_m]) # [batch_size, num_labels, m]
 
       # get d(fi, wyi)
-      dyi = tf.reduce_sum(mask_wji_allm * d, axis=1, keepdims=True) # [batch_size, 1, m]
+      dyi = tf.reduce_sum(mask_wji * d, axis=1, keepdims=True) # [batch_size, 1]
       
       # calculate unpacked loss_mm
       # element (i,j) is lambda + d(fi, wj) - d(fi, wyj)
-      loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels, m]
+      loss_mm_unpacked = tf.maximum(Lambda + d - dyi, 0) # [batch_size, num_labels]
 
       # calculate loss_mm
-      loss_mm_allm = tf.reduce_sum((1.0-mask_wji_allm) * loss_mm_unpacked, axis=1) # [batch_size, m]
+      loss_mm = tf.reduce_sum((1.0-mask_wji) * loss_mm_unpacked, axis=1) # [batch_size]
 
-      # finally take maximum ones
-      loss_mm = tf.reduce_max(loss_mm_allm, axis=-1) # [batch_size]
-      
       ######
       ## calculate diversity regualrizer R(w) [1]
       ######
