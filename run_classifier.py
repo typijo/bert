@@ -535,6 +535,31 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     """See base class."""
     return [str(i) for i in range(100)] # max 100 terms
 
+  def get_train_examples_sqrtsample(self, data_dir, multiplier=1, seed=None):
+    """Sample examples from each class as much as multiplier*sqrt(num_data_of_class)"""
+
+    exampless = [[] for _ in range(100)]
+
+    for i in range(len(os.listdir(data_dir))):
+      examples = self._create_examples(
+        self._read_tsv(os.path.join(data_dir, "{}.tsv".format(i))), "train")
+
+      for example in examples:
+        exampless[example.label] += [example]
+    
+    import random
+    if type(seed) is int:
+      random.seed(seed)
+    
+    import math
+    examples_return = []
+    for examples in exampless:
+      num_sample = min(len(examples), multiplier*math.sqrt(len(examples)))
+      examples_selected = random.sample(examples, num_sample)
+      examples_return += examples_selected
+    
+    return examples_return
+
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer, set_cid_on_segmentids=False):
   """Converts a single `InputExample` into a single `InputFeatures`."""
