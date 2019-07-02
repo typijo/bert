@@ -674,7 +674,7 @@ def file_based_convert_examples_to_features(
     features["segment_ids"] = create_int_feature(feature.segment_ids)
     features["label_ids"] = create_int_feature([feature.label_id])
     if feature.input_cid != None:  # *ADDED* set cid
-      features["input_cids"] = create_int_feature(feature.input_cid)
+      features["input_cids"] = create_int_feature([feature.input_cid])
     features["is_real_example"] = create_int_feature(
         [int(feature.is_real_example)])
 
@@ -883,7 +883,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
       log_probs = tf.nn.log_softmax(logits, axis=-1)
       
       ######
-      ## hyper-parameters #TODO let hyper-parameters be arguments
+      ## hyper-parameters 
       ######
       Sigma = affloss_sigma
       Lambda = affloss_lambda
