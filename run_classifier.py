@@ -545,7 +545,7 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
         self._read_tsv(os.path.join(data_dir, "{}.tsv".format(i))), "train")
 
       for example in examples:
-        exampless[example.label] += [example]
+        exampless[int(example.label)] += [example]
     
     import random
     if type(seed) is int:
