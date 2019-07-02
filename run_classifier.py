@@ -540,12 +540,11 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
 
     exampless = [[] for _ in range(100)]
 
-    for i in range(len(os.listdir(data_dir))):
-      examples = self._create_examples(
-        self._read_tsv(os.path.join(data_dir, "{}.tsv".format(i))), "train")
+    examples = self._create_examples(
+      self._read_tsv(data_dir, "train"))
 
-      for example in examples:
-        exampless[int(example.label)] += [example]
+    for example in examples:
+      exampless[int(example.label)] += [example]
     
     import random
     if type(seed) is int:
