@@ -541,7 +541,7 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     exampless = [[] for _ in range(100)]
 
     examples = self._create_examples(
-      self._read_tsv(data_dir, "train"))
+      self._read_tsv(data_dir), "train")
 
     for example in examples:
       exampless[int(example.label)] += [example]
