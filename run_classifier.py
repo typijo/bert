@@ -546,8 +546,11 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     
     return exampless
   
-  def get_train_examples_undersampling(self, data_dir, seed=None):
-    exampless = self.get_examples_eachclass(data_dir)
+  def get_train_examples_undersampling(self, data_dir="", seed=None, cache=None):
+    if cache is None:
+      exampless = self.get_examples_eachclass(data_dir)
+    else:
+      exampless = cache
 
     num_min = 1e9
     for examples in exampless:
@@ -571,8 +574,11 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
 
     return examples_return
   
-  def get_train_examples_softundersampling(self, data_dir, alpha=1, beta=2, gamma=0, seed=None):
-    exampless = self.get_examples_eachclass(data_dir)
+  def get_train_examples_softundersampling(self, data_dir="", alpha=1, beta=2, gamma=0, seed=None, cache=None):
+    if cache is None:
+      exampless = self.get_examples_eachclass(data_dir)
+    else:
+      exampless = cache
     
     import random
     if type(seed) is int:
