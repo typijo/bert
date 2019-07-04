@@ -534,10 +534,8 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
   def get_labels(self):
     """See base class."""
     return [str(i) for i in range(100)] # max 100 terms
-
-  def get_train_examples_sqrtsample(self, data_dir, multiplier=1, seed=None):
-    """Sample examples from each class as much as multiplier*sqrt(num_data_of_class)"""
-
+  
+  def get_examples_eachclass(self, data_dir):
     exampless = [[] for _ in range(100)]
 
     examples = self._create_examples(
@@ -546,6 +544,29 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     for example in examples:
       exampless[int(example.label)] += [example]
     
+    return exampless
+  
+  def get_train_examples_undersampling(self, data_dir, seed=None):
+    exampless = self.get_examples_eachclass(data_dir)
+
+    num_min = min([len(examples) for examples in exampless])
+
+    import random
+    if type(seed) is int:
+      random.seed(seed)
+    
+    examples_return = []
+    for examples in exampless:
+      examples_selected = random.sample(examples, num_min)
+      examples_return += examples_selected
+    
+    random.shuffle(examples_return)
+
+    return examples_return
+  
+  def get_train_examples_softundersampling(self, data_dir, alpha=1, beta=2, gamma=0, seed=None):
+    exampless = self.get_examples_eachclass(data_dir)
+    
     import random
     if type(seed) is int:
       random.seed(seed)
@@ -553,13 +574,17 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     import math
     examples_return = []
     for examples in exampless:
-      num_sample = min(len(examples), multiplier*math.sqrt(len(examples)))
+      num_sample = min(len(examples), alpha*math.pow(len(examples), 1.0/beta) + gamma)
       examples_selected = random.sample(examples, int(num_sample))
       examples_return += examples_selected
     
     random.shuffle(examples_return)
     
     return examples_return
+
+  def get_train_examples_sqrtsample(self, data_dir, multiplier=1, seed=None):
+    """Sample examples from each class as much as multiplier*sqrt(num_data_of_class)"""
+    return self.get_train_examples_softundersampling(data_dir, alpha=multiplier, beta=2, gamma=0, seed=seed)
 
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer, set_cid_on_segmentids=False):
