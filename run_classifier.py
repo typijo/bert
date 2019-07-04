@@ -562,6 +562,8 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     
     examples_return = []
     for examples in exampless:
+      if len(examples) == 0:
+        continue
       examples_selected = random.sample(examples, num_min)
       examples_return += examples_selected
     
