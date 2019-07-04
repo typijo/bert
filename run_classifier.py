@@ -549,7 +549,12 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
   def get_train_examples_undersampling(self, data_dir, seed=None):
     exampless = self.get_examples_eachclass(data_dir)
 
-    num_min = min([len(examples) for examples in exampless])
+    num_min = 1e9
+    for examples in exampless:
+      num_this = len(examples)
+      if num_this == 0:
+        continue
+      num_min = min(num_min, num_this)
 
     import random
     if type(seed) is int:
