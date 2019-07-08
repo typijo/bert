@@ -573,6 +573,44 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     random.shuffle(examples_return)
 
     return examples_return
+
+  def get_train_examples_ratiobase_softundersampling(self, data_dir="", betas=0, seed=None, cache=None):
+    """
+    Ratio base soft undersampling.
+
+    If we have dataset of n classes, i-th class data will be sampled as much as follows:
+    len(dataset[i]) * (len(dataset[i])/min(len(dataset[j]) for j in range(n)))**betas[i]
+
+    Parameters
+    --------------
+    betas   int or float or (list of int or float)
+        List of beta for each class.
+        If betas is a list, list size should be same as the number of dataset classes
+        Use uniformed beta if float value is given.
+    """
+
+    if cache is None:
+      exampless = self.get_examples_eachclass(data_dir)
+    else:
+      exampless = cache
+    
+    if type(betas) in [int, float]:
+      betas = [betas for _ in range(len(exampless))]
+    num_examples_min = min([len(examples) for examples in exampless])
+    
+    import random
+    if type(seed) is int:
+      random.seed(seed)
+    
+    examples_return = []
+    for i, examples in enumerate(exampless):
+      num_sample = min(len(examples), num_examples_min * (len(examples)/num_examples_min) ** (1/betas[i]))
+      examples_selected = random.sample(examples, int(num_sample))
+      examples_return += examples_selected
+    
+    random.shuffle(examples_return)
+    
+    return examples_return
   
   def get_train_examples_softundersampling(self, data_dir="", alpha=1, beta=2, gamma=0, seed=None, cache=None):
     if cache is None:
