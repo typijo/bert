@@ -161,10 +161,10 @@ def whitespace_tokenize(text):
 class FullTokenizer(object):
   """Runs end-to-end tokenziation."""
 
-  def __init__(self, vocab_file, do_lower_case=True):
+  def __init__(self, vocab_file, do_lower_case=True, do_tokenize_chinese_chars=True):
     self.vocab = load_vocab(vocab_file)
     self.inv_vocab = {v: k for k, v in self.vocab.items()}
-    self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case)
+    self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case, do_tokenize_chinese_chars=do_tokenize_chinese_chars)
     self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
 
   def tokenize(self, text):
@@ -185,13 +185,14 @@ class FullTokenizer(object):
 class BasicTokenizer(object):
   """Runs basic tokenization (punctuation splitting, lower casing, etc.)."""
 
-  def __init__(self, do_lower_case=True):
+  def __init__(self, do_lower_case=True, do_tokenize_chinese_chars=True):
     """Constructs a BasicTokenizer.
 
     Args:
       do_lower_case: Whether to lower case the input.
     """
     self.do_lower_case = do_lower_case
+    self.do_tokenize_chinese_chars = do_tokenize_chinese_chars
 
   def tokenize(self, text):
     """Tokenizes a piece of text."""
@@ -204,7 +205,8 @@ class BasicTokenizer(object):
     # and generally don't have any Chinese data in them (there are Chinese
     # characters in the vocabulary because Wikipedia does have some Chinese
     # words in the English Wikipedia.).
-    text = self._tokenize_chinese_chars(text)
+    if self.do_tokenize_chinese_chars:
+      text = self._tokenize_chinese_chars(text)
 
     orig_tokens = whitespace_tokenize(text)
     split_tokens = []
