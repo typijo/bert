@@ -596,7 +596,13 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     
     if type(betas) in [int, float]:
       betas = [betas for _ in range(len(exampless))]
-    num_examples_min = min([len(examples) for examples in exampless])
+    
+    num_examples_min = 1e9
+    for examples in exampless:
+      num_examples_this = len(examples)
+      if num_examples_this == 0:
+        continue
+      num_examples_min = min(num_examples_min, num_examples_this)
     
     import random
     if type(seed) is int:
