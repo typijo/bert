@@ -216,7 +216,7 @@ class BasicTokenizer(object):
         token = token.lower()
         token = self._run_strip_accents(token)
       
-      if token in self.metawords:
+      if hasattr(self.metawords, "__iter__") and token in self.metawords:
         tokens = [token]
       else:
         tokens = self._run_split_on_punc(token)
