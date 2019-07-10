@@ -161,10 +161,10 @@ def whitespace_tokenize(text):
 class FullTokenizer(object):
   """Runs end-to-end tokenziation."""
 
-  def __init__(self, vocab_file, do_lower_case=True, do_tokenize_chinese_chars=True):
+  def __init__(self, vocab_file, do_lower_case=True, do_tokenize_chinese_chars=True, metawords=None):
     self.vocab = load_vocab(vocab_file)
     self.inv_vocab = {v: k for k, v in self.vocab.items()}
-    self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case, do_tokenize_chinese_chars=do_tokenize_chinese_chars)
+    self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case, do_tokenize_chinese_chars=do_tokenize_chinese_chars, metawords=metawords)
     self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
 
   def tokenize(self, text):
@@ -185,7 +185,7 @@ class FullTokenizer(object):
 class BasicTokenizer(object):
   """Runs basic tokenization (punctuation splitting, lower casing, etc.)."""
 
-  def __init__(self, do_lower_case=True, do_tokenize_chinese_chars=True):
+  def __init__(self, do_lower_case=True, do_tokenize_chinese_chars=True, metawords=None):
     """Constructs a BasicTokenizer.
 
     Args:
@@ -193,6 +193,7 @@ class BasicTokenizer(object):
     """
     self.do_lower_case = do_lower_case
     self.do_tokenize_chinese_chars = do_tokenize_chinese_chars
+    self.metawords = metawords
 
   def tokenize(self, text):
     """Tokenizes a piece of text."""
@@ -214,7 +215,12 @@ class BasicTokenizer(object):
       if self.do_lower_case:
         token = token.lower()
         token = self._run_strip_accents(token)
-      split_tokens.extend(self._run_split_on_punc(token))
+      
+      if token in self.metawords:
+        tokens = [token]
+      else:
+        tokens = self._run_split_on_punc(token)
+      split_tokens.extend(tokens)
 
     output_tokens = whitespace_tokenize(" ".join(split_tokens))
     return output_tokens
