@@ -610,10 +610,7 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     
     examples_return = []
     for i, examples in enumerate(exampless):
-      if len(examples) > 0:
-        num_sample = min(len(examples), len(examples) * (num_examples_min/len(examples)) ** (1/betas[i]))
-      else:
-        num_sample = 0
+      num_sample = min(len(examples), num_examples_min * (len(examples)/num_examples_min) ** (1/betas[i]))
       
       examples_selected = random.sample(examples, int(num_sample))
       examples_return += examples_selected
