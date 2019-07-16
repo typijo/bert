@@ -574,7 +574,7 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
 
     return examples_return
 
-  def get_train_examples_ratiobase_softundersampling(self, data_dir="", betas=0, seed=None, cache=None):
+  def get_train_examples_ratiobase_softundersampling(self, data_dir="", betas=0, seed=None, cache=None, max_examples=1000000):
     """
     Ratio base soft undersampling.
 
@@ -616,6 +616,9 @@ class TltcProcessorWithGlobalTid(TltcProcessorWithCid):
     
     random.shuffle(examples_return)
     
+    if type(max_examples) is int:
+      examples_return = examples_return[:max_examples]
+
     return examples_return
   
   def get_train_examples_softundersampling(self, data_dir="", alpha=1, beta=2, gamma=0, seed=None, cache=None):
