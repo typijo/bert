@@ -230,7 +230,13 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
           eval_metrics=eval_metrics,
           scaffold_fn=scaffold_fn)
     else:
-      raise ValueError("Only TRAIN and EVAL modes are supported: %s" % (mode))
+      """*modified* use for language model"""
+      output_spec = tf.contrib.tpu.TPUEstimatorSpec(
+          mode=mode,
+          predictions={"probabilities": masked_lm_log_probs},
+          scaffold_fn=scaffold_fn)
+      
+      # raise ValueError("Only TRAIN and EVAL modes are supported: %s" % (mode))
 
     return output_spec
 
