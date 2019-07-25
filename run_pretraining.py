@@ -331,6 +331,7 @@ def input_fn_builder(input_files,
                      max_seq_length,
                      max_predictions_per_seq,
                      is_training,
+                     is_predicting=False,
                      num_cpu_threads=4):
   """Creates an `input_fn` closure to be passed to TPUEstimator."""
 
@@ -373,6 +374,9 @@ def input_fn_builder(input_files,
               sloppy=is_training,
               cycle_length=cycle_length))
       d = d.shuffle(buffer_size=100)
+    elif is_predicting:
+      # No repeating if we use the model for predition
+      d = tf.data.TFRecordDataset(input_files)
     else:
       d = tf.data.TFRecordDataset(input_files)
       # Since we evaluate for a fixed number of steps we don't want to encounter
