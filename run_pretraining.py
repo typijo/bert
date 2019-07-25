@@ -139,11 +139,11 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     (masked_lm_loss,
      masked_lm_example_loss, masked_lm_log_probs) = get_masked_lm_output(
          bert_config, model.get_sequence_output(), model.get_embedding_table(),
-         masked_lm_positions, masked_lm_ids, masked_lm_weights)
+         masked_lm_positions, masked_lm_ids, masked_lm_weights, is_training)
 
     (next_sentence_loss, next_sentence_example_loss,
      next_sentence_log_probs) = get_next_sentence_output(
-         bert_config, model.get_pooled_output(), next_sentence_labels)
+         bert_config, model.get_pooled_output(), next_sentence_labels, is_training)
 
     total_loss = masked_lm_loss + next_sentence_loss
 
@@ -244,7 +244,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
 
 def get_masked_lm_output(bert_config, input_tensor, output_weights, positions,
-                         label_ids, label_weights):
+                         label_ids, label_weights, is_training=True):
   """Get loss and log probs for the masked LM."""
   input_tensor = gather_indexes(input_tensor, positions)
 
@@ -257,7 +257,8 @@ def get_masked_lm_output(bert_config, input_tensor, output_weights, positions,
           units=bert_config.hidden_size,
           activation=modeling.get_activation(bert_config.hidden_act),
           kernel_initializer=modeling.create_initializer(
-              bert_config.initializer_range))
+              bert_config.initializer_range),
+          trainable=is_training)
       input_tensor = modeling.layer_norm(input_tensor)
 
     # The output weights are the same as the input embeddings, but there is
@@ -265,7 +266,8 @@ def get_masked_lm_output(bert_config, input_tensor, output_weights, positions,
     output_bias = tf.get_variable(
         "output_bias",
         shape=[bert_config.vocab_size],
-        initializer=tf.zeros_initializer())
+        initializer=tf.zeros_initializer(),
+        trainable=is_training)
     logits = tf.matmul(input_tensor, output_weights, transpose_b=True)
     logits = tf.nn.bias_add(logits, output_bias)
     log_probs = tf.nn.log_softmax(logits, axis=-1)
@@ -288,7 +290,7 @@ def get_masked_lm_output(bert_config, input_tensor, output_weights, positions,
   return (loss, per_example_loss, log_probs)
 
 
-def get_next_sentence_output(bert_config, input_tensor, labels):
+def get_next_sentence_output(bert_config, input_tensor, labels, is_training=True):
   """Get loss and log probs for the next sentence prediction."""
 
   # Simple binary classification. Note that 0 is "next sentence" and 1 is
@@ -297,9 +299,10 @@ def get_next_sentence_output(bert_config, input_tensor, labels):
     output_weights = tf.get_variable(
         "output_weights",
         shape=[2, bert_config.hidden_size],
-        initializer=modeling.create_initializer(bert_config.initializer_range))
+        initializer=modeling.create_initializer(bert_config.initializer_range),
+        trainable=is_training)
     output_bias = tf.get_variable(
-        "output_bias", shape=[2], initializer=tf.zeros_initializer())
+        "output_bias", shape=[2], initializer=tf.zeros_initializer(), trainable=is_training)
 
     logits = tf.matmul(input_tensor, output_weights, transpose_b=True)
     logits = tf.nn.bias_add(logits, output_bias)
