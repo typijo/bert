@@ -259,7 +259,7 @@ def get_masked_lm_output(bert_config, input_tensor, output_weights, positions,
           kernel_initializer=modeling.create_initializer(
               bert_config.initializer_range),
           trainable=is_training)
-      input_tensor = modeling.layer_norm(input_tensor)
+      input_tensor = modeling.layer_norm(input_tensor, trainable=is_training)
 
     # The output weights are the same as the input embeddings, but there is
     # an output-only bias for each token.
