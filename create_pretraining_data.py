@@ -42,6 +42,10 @@ flags.DEFINE_bool(
     "Whether to lower case the input text. Should be True for uncased "
     "models and False for cased models.")
 
+flags.DEFINE_bool(
+    "tokenize_chinese_chars", True,
+    "Whether to tokenize chinese characters. *Added for Japanese BERT model*")
+
 flags.DEFINE_integer("max_seq_length", 128, "Maximum sequence length.")
 
 flags.DEFINE_integer("max_predictions_per_seq", 20,
@@ -410,7 +414,7 @@ def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
 
   tokenizer = tokenization.FullTokenizer(
-      vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
+      vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case, do_tokenize_chinese_chars=FLAGS.tokenize_chinese_chars)
 
   input_files = []
   for input_pattern in FLAGS.input_file.split(","):
